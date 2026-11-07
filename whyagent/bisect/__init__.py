@@ -124,3 +124,54 @@ def ddmin(final: list[int], dep: dict[int, set[int]], run: RunFn, cap: int = 20)
     except StopIteration:
         return None
     return set(cur)
+
+
+# --- Stage 3: edit-level blame hint ------------------------------------------------------------
+
+def map_line(src_text: str, dst_text: str, line: int) -> int | None:
+    """1-based line in src -> the same line in dst, if it survived unchanged (else None)."""
+    import difflib
+
+    a, b = src_text.splitlines(), dst_text.splitlines()
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if tag == "equal" and i1 < line <= i2:
+            return j1 + (line - i1)
+    return None
+
+
+def line_owners(steps: list[Step], file: str, base_text: str | None) -> list[int | None]:
+    """For each line of `file` after all steps, the id of the step that last wrote it (None = parent)."""
+    import difflib
+
+    from ..adapters.fidelity import apply
+
+    text = base_text
+    owners: list[int | None] = [None] * len((text or "").splitlines())
+    for s in steps:
+        if s.file != file:
+            continue
+        new = apply(text, s)
+        a, b = (text or "").splitlines(), new.splitlines()
+        nxt: list[int | None] = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+            nxt += owners[i1:i2] if tag == "equal" else [s.id] * (j2 - j1)
+        owners, text = nxt, new
+    return owners
+
+
+def blame_hint(order: list[int], hint: int, dep: dict[int, set[int]], run: RunFn) -> dict:
+    """PRD Stage 3. Revert the blamed edit (+ dependents) from the final state.
+
+    PASS -> candidate; confirm the boundary with P(k-1) == PASS and P(k) == TARGET_FAIL (2 runs),
+    which proves all three root-cause facts. Anything else -> blame was wrong; go on to bisect.
+    """
+    drop = closure({hint}, dep)
+    reverted = run([i for i in order if i not in drop])
+    out = {"step_id": hint, "reverted": sorted(drop), "outcome": reverted, "is_cause": False}
+    if reverted != PASS:
+        return out
+    k = order.index(hint) + 1
+    before, after = run(order[:k - 1]), run(order[:k])
+    out.update(before=before, after=after, is_cause=before == PASS and after == TARGET_FAIL,
+               collateral=sorted(drop - {hint}))
+    return out
