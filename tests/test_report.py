@@ -11,10 +11,13 @@ def test_render_embeds_data_and_escapes_script_close():
     data = json.loads(SAMPLE.read_text(encoding="utf-8"))
     data["notes"].append("</script><b>x</b>")
     html = render_html(data)
-    assert "/*__WHYAGENT_DATA__*/" not in html
+    assert "{{ DATA_JSON }}" not in html
     assert "</script><b>" not in html
     payload = html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
-    assert json.loads(payload)["root_cause"]["step_id"] == 3
+    view = json.loads(payload)
+    assert view["report"]["cause"]["edit"] == 3
+    assert "</script><b>x</b>" in view["report"]["notes"]
+    assert view["db"] is False and view["runs"]
 
 
 def test_report_write(tmp_path):

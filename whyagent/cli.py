@@ -69,7 +69,7 @@ def cmd_check_entire(_args) -> int:
 
 
 def _finish(report: Report, args, code: int) -> int:
-    path = report.write(args.report)
+    path = report.write(args.report, tiger=not getattr(args, "live", False))  # --live never touches Tiger
     print(f"report: {path}")
     if args.open:
         webbrowser.open(path.resolve().as_uri())
@@ -251,7 +251,8 @@ def cmd_root_cause(args) -> int:
         print("--root-cause: this file has no test command, pass --test")
         return 2
     head = rc.head_state.base_commit
-    report = Report(repo=Path.cwd().name, test=test, good=fx.get("good"), head=head, line=fx.get("line"))
+    report = Report(repo=Path.cwd().name, test=test, good=fx.get("good"), head=head, line=fx.get("line"),
+                    command=getattr(args, "command", None))
     report.note(f"Stages 7–8 only, from the hard-coded root cause in {args.root_cause}.")
     report["root_cause"] = {"step_id": rc.step.id, "failing_output": rc.failing_output}
     report["session"] = {"id": rc.step.session_id, "agent": rc.step.agent, "prompt": rc.step.prompt,
@@ -260,6 +261,7 @@ def cmd_root_cause(args) -> int:
     if sandbox is None:
         return 2
     runlog = RunLog(label=f"{Path.cwd().name}: {test}", url="" if args.live else None)  # --live: no Tiger
+    report["meta"]["analysis_id"] = runlog.analysis_id
     rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
         if args.live:
@@ -298,8 +300,10 @@ def cmd_analyze(args) -> int:
 
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
-    report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line)
+    report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line,
+                    command=getattr(args, "command", None))
     runlog = RunLog(label=f"{Path.cwd().name}: {args.test}", url="" if args.live else None)  # --live: no Tiger
+    report["meta"]["analysis_id"] = runlog.analysis_id  # joins this report to its Tiger rows
     try:
         return _analyze(args, head, good, report, runlog)
     except Exception as e:  # noqa: BLE001 — an error in any stage still writes the report
@@ -530,6 +534,8 @@ def main(argv=None) -> int:
                    help="--live: model for the rule and the rerun agent (default $WHYAGENT_MODEL, else gemini; "
                         "mock = canned responses for the seeded demo repo)")
     args = p.parse_args(argv)
+    import shlex
+    args.command = "whyagent " + shlex.join(sys.argv[1:] if argv is None else argv)  # shown on the report
     if args.live and (args.trail or args.lesson or args.no_rerun):
         p.error("--live can't be combined with --trail, --lesson or --no-rerun")
     if (args.yes or args.model) and not args.live:

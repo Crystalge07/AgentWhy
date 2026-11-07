@@ -18,6 +18,10 @@ ANALYSES_DDL = """CREATE TABLE IF NOT EXISTS analyses (
 )"""
 
 
+# Blind bisect estimate (runs a bisect over every non-test edit would need), set when the report is written.
+BLIND_DDL = "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER"
+
+
 def connect(url: str | None = None):
     import psycopg
     url = url if url is not None else os.environ.get("TIGER_DATABASE_URL")

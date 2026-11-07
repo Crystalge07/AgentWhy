@@ -95,7 +95,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     failing_output = [""]
 
     def record(stage: str, ids: list[int], res) -> str:
-        report.log_runs(stage, f"{parent[:7]}+{len(ids)} edits", res)
+        report.log_runs(stage, f"{parent[:7]}+{len(ids)} edits", res, edits=ids)
         for r in res:
             if r.outcome == TARGET_FAIL and not failing_output[0]:
                 failing_output[0] = r.output

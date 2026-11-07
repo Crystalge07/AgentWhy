@@ -5,8 +5,11 @@ CREATE TABLE IF NOT EXISTS analyses (
     analysis_id TEXT PRIMARY KEY,
     started     TIMESTAMPTZ NOT NULL DEFAULT now(),
     label       TEXT NOT NULL,      -- which bug: repo + test command
-    pruned      BOOLEAN NOT NULL    -- Graph pruning used (set once Stage 4 verifies it)
+    pruned      BOOLEAN NOT NULL,   -- Graph pruning used (set once Stage 4 verifies it)
+    blind_runs  INTEGER             -- blind bisect estimate: ceil(log2(non-test edits)) x runs per state
 );
+-- added after launch; whyagent runs this when it writes a report
+ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER;
 
 CREATE TABLE IF NOT EXISTS runs (
     time         TIMESTAMPTZ NOT NULL DEFAULT now(),
