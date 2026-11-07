@@ -71,3 +71,87 @@ def check_connection(cwd: str = ".") -> list[tuple[str, bool, str]]:
             if isinstance(list_checkpoints(cwd), list) else "ok")
     attempt("HEAD checkpoint trailer", lambda: checkpoint_id("HEAD", cwd) or "none (human commit)")
     return rows
+
+
+# --- Brain: validated lessons ----------------------------------------------------------------
+# Entire Brain has no CLI or API access for Entire-native repos (checked 2026-11-07), so lessons
+# live in a JSON-lines file behind this interface (the PRD's fallback). B's rerun stage only talks
+# to Brain through brain_lookup / brain_save, so the backend can change without touching it.
+
+BRAIN_SOURCE = "local lesson store (Entire Brain has no CLI access)"
+_EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Warning|Failure))\b:?\s*(.*)$")
+
+
+def brain_path() -> "Path":
+    import os
+    from pathlib import Path
+
+    return Path(os.environ.get("WHYAGENT_BRAIN") or Path.home() / ".whyagent" / "brain.jsonl")
+
+
+def error_key(output: str) -> tuple[str, str]:
+    """(exception type, normalized message) of the last exception line in a test's output."""
+    for line in reversed(output.strip().splitlines()):
+        m = _EXC.match(line.strip())
+        if m:
+            name = m[1].rsplit(".", 1)[-1]
+            msg = re.sub(r"0x[0-9a-f]+|\d+|'[^']*'|\"[^\"]*\"", "#", m[2].lower()).strip()
+            return name, msg[:200]
+    return "", ""
+
+
+def _brain_records() -> list[dict]:
+    p = brain_path()
+    if not p.exists():
+        return []
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def brain_lookup(files: list[str], error: str) -> dict | None:
+    """Best validated lesson for these files and this failure, or None.
+
+    A lesson matches when it shares a file *and* the same exception type, or has an identical
+    normalized error message. Ties go to the most recent lesson.
+    """
+    etype, emsg = error_key(error)
+    best, best_score = None, 0
+    for rec in _brain_records():
+        overlap = bool(set(files) & set(rec.get("files", [])))
+        same_type = bool(etype) and etype == rec.get("error_type")
+        same_msg = bool(emsg) and emsg == rec.get("error_msg")
+        if not (same_msg or (overlap and same_type)):
+            continue
+        score = 4 * same_msg + 2 * same_type + overlap
+        if score >= best_score:
+            best, best_score = rec, score
+    return best
+
+
+def brain_save(lesson: dict) -> dict:
+    """Store a lesson. Only lessons that the counterfactual reruns VALIDATED are accepted.
+
+    Required keys: text, files, failing_output, verdict ("VALIDATED"), p. Optional: checkpoint,
+    session_id, agent, step_id, runs ({"a": [...], "b": [...]}).
+    """
+    from datetime import datetime, timezone
+
+    if lesson.get("verdict") != "VALIDATED":
+        raise ValueError(f"Brain only accepts validated lessons (verdict={lesson.get('verdict')!r})")
+    for k in ("text", "files", "failing_output", "p"):
+        if k not in lesson:
+            raise ValueError(f"lesson is missing {k!r}")
+    etype, emsg = error_key(lesson["failing_output"])
+    rec = {k: v for k, v in lesson.items() if k != "failing_output"}
+    rec.update(error_type=etype, error_msg=emsg,
+               saved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    p = brain_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+    return rec
