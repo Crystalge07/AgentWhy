@@ -48,13 +48,13 @@ class Report(dict):
     def write(self, html_path: str | Path) -> Path:
         html_path = Path(html_path)
         html_path.parent.mkdir(parents=True, exist_ok=True)
-        html_path.with_suffix(".json").write_text(self.to_json())
-        html_path.write_text(render_html(json.loads(self.to_json())))
+        html_path.with_suffix(".json").write_text(self.to_json(), encoding="utf-8")
+        html_path.write_text(render_html(json.loads(self.to_json())), encoding="utf-8")
         return html_path
 
 
 def render_html(data: dict) -> str:
-    template = resources.files("whyagent").joinpath("report.html").read_text()
+    template = resources.files("whyagent").joinpath("report.html").read_text(encoding="utf-8")
     # </ inside a <script> block would end it early
     payload = json.dumps(data).replace("</", "<\\/")
     return template.replace("/*__WHYAGENT_DATA__*/null", payload)

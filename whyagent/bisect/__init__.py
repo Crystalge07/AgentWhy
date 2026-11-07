@@ -124,3 +124,114 @@ def ddmin(final: list[int], dep: dict[int, set[int]], run: RunFn, cap: int = 20)
     except StopIteration:
         return None
     return set(cur)
+
+
+# --- Stage 3: edit-level blame hint ------------------------------------------------------------
+
+def map_line(src_text: str, dst_text: str, line: int) -> int | None:
+    """1-based line in src -> the same line in dst, if it survived unchanged (else None)."""
+    import difflib
+
+    a, b = src_text.splitlines(), dst_text.splitlines()
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if tag == "equal" and i1 < line <= i2:
+            return j1 + (line - i1)
+    return None
+
+
+def line_owners(steps: list[Step], file: str, base_text: str | None) -> list[int | None]:
+    """For each line of `file` after all steps, the id of the step that last wrote it (None = parent)."""
+    import difflib
+
+    from ..adapters.fidelity import apply
+
+    text = base_text
+    owners: list[int | None] = [None] * len((text or "").splitlines())
+    for s in steps:
+        if s.file != file:
+            continue
+        new = apply(text, s)
+        a, b = (text or "").splitlines(), new.splitlines()
+        nxt: list[int | None] = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+            nxt += owners[i1:i2] if tag == "equal" else [s.id] * (j2 - j1)
+        owners, text = nxt, new
+    return owners
+
+
+def blame_hint(order: list[int], hint: int, dep: dict[int, set[int]], run: RunFn) -> dict:
+    """PRD Stage 3. Revert the blamed edit (+ dependents) from the final state.
+
+    PASS -> candidate; confirm the boundary with P(k-1) == PASS and P(k) == TARGET_FAIL (2 runs),
+    which proves all three root-cause facts. Anything else -> blame was wrong; go on to bisect.
+    """
+    drop = closure({hint}, dep)
+    reverted = run([i for i in order if i not in drop])
+    out = {"step_id": hint, "reverted": sorted(drop), "outcome": reverted, "is_cause": False}
+    if reverted != PASS:
+        return out
+    k = order.index(hint) + 1
+    before, after = run(order[:k - 1]), run(order[:k])
+    out.update(before=before, after=after, is_cause=before == PASS and after == TARGET_FAIL,
+               collateral=sorted(drop - {hint}))
+    return out
+
+
+# --- Stage 5 (parallel) and --scan -----------------------------------------------------------
+
+RunManyFn = Callable[[list[list[int]]], list[str]]  # several prefixes at once (B's worker pool)
+
+
+def sequential(run: RunFn) -> RunManyFn:
+    """Adapt a one-at-a-time run into run_many, for when there's no worker pool."""
+    return lambda prefixes: [run(p) for p in prefixes]
+
+
+def prefix_bisect_parallel(order: list[int], run_many: RunManyFn, workers: int = 4) -> tuple[int | None, int]:
+    """Like prefix_bisect, but each round tests `workers` evenly spaced prefixes at once.
+
+    Rounds ~ log_(W+1)(n): 15 edits with 4 workers take 2 rounds instead of 4 sequential runs.
+    Returns (k, rounds); k is 1-based with P(k-1) == PASS and P(k) == TARGET_FAIL, or None if
+    every candidate around the boundary was OTHER.
+    """
+    n = len(order)
+    known: dict[int, str] = {0: PASS, n: TARGET_FAIL}
+    lo, hi, rounds = 0, n, 0
+    while hi - lo > 1:
+        cands = [k for k in range(lo + 1, hi) if k not in known]
+        if not cands:
+            return None, rounds  # everything between lo and hi was OTHER
+        picks: list[int] = []
+        for j in range(1, workers + 1):
+            target = lo + (hi - lo) * j / (workers + 1)
+            for k in sorted(cands, key=lambda c: (abs(c - target), c)):
+                if k not in picks:
+                    picks.append(k)
+                    break
+            if len(picks) == len(cands):
+                break
+        picks.sort()
+        rounds += 1
+        for k, r in zip(picks, run_many([order[:k] for k in picks])):
+            known[k] = r
+        fails = [k for k in range(lo + 1, hi) if known.get(k) == TARGET_FAIL]
+        hi = min(fails) if fails else hi
+        passes = [k for k in range(lo, hi) if known.get(k) == PASS]
+        lo = max(passes)
+    return hi, rounds
+
+
+def scan(order: list[int], run_many: RunManyFn) -> dict:
+    """--scan: test every prefix. Reports every PASS -> TARGET_FAIL boundary (OTHER is skipped),
+    so a test that flips back and forth is visible instead of silently finding just one boundary."""
+    results = [PASS] + run_many([order[:k] for k in range(1, len(order) + 1)])
+    boundaries, prev = [], PASS
+    for k in range(1, len(results)):
+        r = results[k]
+        if r == OTHER:
+            continue
+        if prev == PASS and r == TARGET_FAIL:
+            boundaries.append(k)
+        prev = r
+    return {"outcomes": results[1:], "boundaries": boundaries, "first": boundaries[0] if boundaries else None,
+            "flips": len(boundaries) > 1}

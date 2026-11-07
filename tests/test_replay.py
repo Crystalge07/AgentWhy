@@ -27,6 +27,43 @@ def test_build_and_run(tmp_path):
     assert rp.runs == 2
 
 
+def test_build_preserves_non_ascii_source(tmp_path):
+    """Edits are applied as UTF-8 on every OS (Windows defaults to cp1252 and would mangle or crash)."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_text('MARK = "✓ café “quoted”"\nOK = True\n', encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "OK = True", "OK = False")]
+    rp = Replayer(str(tmp_path), steps, "true")
+    d = rp.build(State(base, [1], base))
+    try:
+        assert (tmp_path.__class__(d) / "app.py").read_text(encoding="utf-8") == 'MARK = "✓ café “quoted”"\nOK = False\n'
+    finally:
+        rp.teardown(d)
+
+
+def test_build_ignores_autocrlf(tmp_path):
+    """Agent edits use \\n; a CRLF checkout (core.autocrlf=true, git's Windows default) must not break them."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_bytes(b"def f():\n    return 1\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    git(tmp_path, "config", "core.autocrlf", "true")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "def f():\n    return 1", "def f():\n    return 2")]
+    rp = Replayer(str(tmp_path), steps, "true")
+    d = rp.build(State(base, [1], base))
+    try:
+        assert (tmp_path.__class__(d) / "app.py").read_bytes() == b"def f():\n    return 2\n"
+    finally:
+        rp.teardown(d)
+
+
 import pytest
 
 from whyagent.replay import DockerSandbox, docker_available
@@ -73,9 +110,11 @@ def test_docker_sandbox(tmp_path):
 
 def test_vote():
     from whyagent.replay import vote
-    assert vote(["PASS", "PASS", "TARGET_FAIL"]) == PASS
+    assert vote(["PASS", "PASS", "TARGET_FAIL"]) == TARGET_FAIL  # any target failure is evidence
     assert vote(["TARGET_FAIL", "OTHER", "OTHER"]) == TARGET_FAIL
-    assert vote(["PASS", "TARGET_FAIL", "OTHER"]) == OTHER
+    assert vote(["PASS", "TARGET_FAIL", "OTHER"]) == TARGET_FAIL
+    assert vote(["PASS", "OTHER", "PASS"]) == OTHER
+    assert vote(["PASS"] * 5) == PASS
     assert vote(["OTHER"]) == OTHER
 
 

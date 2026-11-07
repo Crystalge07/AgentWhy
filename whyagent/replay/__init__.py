@@ -30,11 +30,15 @@ def is_test_file(path: str, globs=DEFAULT_TEST_GLOBS) -> bool:
 
 
 def vote(outcomes: list[str]) -> str:
-    """Flaky-mode majority. OTHER never wins on its own; a PASS/TARGET_FAIL tie is OTHER (no evidence)."""
-    p, f = outcomes.count(PASS), outcomes.count(TARGET_FAIL)
-    if p == f:
-        return OTHER
-    return PASS if p > f else TARGET_FAIL
+    """One verdict from n runs of the same state.
+
+    Any TARGET_FAIL means the bug is present: a failure is evidence, while passes never prove a flaky
+    bug absent. A majority vote would call the recorded cache bug (fails ~28% of runs) PASS almost
+    every time. PASS needs every run to pass; anything else (crashes, other failures) is OTHER.
+    """
+    if TARGET_FAIL in outcomes:
+        return TARGET_FAIL
+    return PASS if outcomes and all(o == PASS for o in outcomes) else OTHER
 
 
 def _git(*args, cwd="."):
@@ -63,21 +67,23 @@ class Replayer:
     def build(self, state: State) -> str:
         d = tempfile.mkdtemp(prefix="whyagent-")
         with self._git_lock:
-            _git("worktree", "add", "--detach", d, state.base_commit, cwd=self.repo)
+            # byte-exact checkout: agent edits use LF, so a CRLF checkout (autocrlf=true) would break them
+            _git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", d,
+                 state.base_commit, cwd=self.repo)
         for sid in state.step_ids:
             s = self.steps[sid]
             if is_test_file(s.file, self.test_globs):
                 continue
             p = Path(d) / os.path.relpath(s.file, self.repo) if os.path.isabs(s.file) else Path(d) / s.file
             p.parent.mkdir(parents=True, exist_ok=True)
-            text = p.read_text() if p.exists() else ""
+            text = p.read_bytes().decode("utf-8") if p.exists() else ""  # bytes: no newline translation
             if s.old_text == "":
                 text = text + s.new_text if text else s.new_text
             elif text.count(s.old_text) >= 1:
                 text = text.replace(s.old_text, s.new_text, 1)
             else:
                 raise ValueError(f"step {sid}: old_text not found in {s.file}")
-            p.write_text(text)
+            p.write_bytes(text.encode("utf-8"))
         # pin test files from pinned_tests_from
         for f in _git("ls-tree", "-r", "--name-only", state.pinned_tests_from, cwd=self.repo).splitlines():
             if is_test_file(f, self.test_globs):
@@ -98,14 +104,15 @@ class Replayer:
             self.runs += 1
         e = self.sandbox.exec(d, self.test_cmd, self.timeout)
         ms = int((time.time() - t0) * 1000)
+        tail = (e.output or "")[-4000:]
         if e.timed_out:
-            return RunResult(OTHER, "timeout", -1, ms)
+            return RunResult(OTHER, "timeout", -1, ms, output=tail)
         sig = signature(e.output)
         if e.exit_code == 0:
-            return RunResult(PASS, sig, 0, ms)
+            return RunResult(PASS, sig, 0, ms, output=tail)
         if self.target_sig is None or sig == self.target_sig:
-            return RunResult(TARGET_FAIL, sig, e.exit_code, ms)
-        return RunResult(OTHER, sig, e.exit_code, ms)
+            return RunResult(TARGET_FAIL, sig, e.exit_code, ms, output=tail)
+        return RunResult(OTHER, sig, e.exit_code, ms, output=tail)
 
     def run(self, state: State, n: int = 1) -> list[RunResult]:
         k = state.key()
@@ -142,5 +149,5 @@ class Replayer:
                 self.runlog.log(self.stage, key, r.outcome, 0 if cached else r.duration_ms, r.tokens, cached=cached)
 
     def outcome(self, state: State, n: int = 1) -> str:
-        """Majority outcome across n runs (see vote)."""
+        """One outcome from n runs (see vote)."""
         return vote([r.outcome for r in self.run(state, n)])

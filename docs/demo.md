@@ -38,3 +38,25 @@ time; a much shorter one hides the bug. Keep the "1 second" in the prompt.
 **Why scenario 2 fools blame:** the traceback ends in the retry loop in `client.py`, which the agent
 also edited, but the cause is `VERIFY_TLS = False` in `config.py`: the transport refuses to send card
 data (any non-GET) over an unverified connection, the retry loop retries that error, then gives up.
+
+## Recorded so far (2026-11-07, A)
+
+Both recordings are real Entire sessions on branches of `payments-demo`. In both, the agent
+avoided the planted trap but made a different, real mistake: it **edited an existing test so its
+change would pass**. A follow-up human commit restores the original test, which is exactly the
+case whyagent pins tests to HEAD for. The demo should say so plainly.
+
+| Branch | Agent | What it did wrong | Restoring commit | whyagent result |
+| --- | --- | --- | --- | --- |
+| `scenario-1` | Claude Opus 5.5 | Paginated correctly, but changed `list_invoices()` to return only page 1 (a breaking change) and rewrote `test_list_invoices_returns_every_invoice` to match | `ea7ecb9` restores the test | blame hint on `payments/client.py:43` confirmed in 5 runs; without `--line`: commit bisect, 4 edits pruned (verified), same edit confirmed |
+| `scenario-3-haiku` | Claude Haiku 5.5 | Added the 1 s cache, saw the settlement test go flaky, and relaxed the test's deadline from 1.5 s to 3 s | `320b6a9` restores 1.5 s | flaky mode (fails ~28%): bisected to the `get_invoice` cache edit and confirmed it, 20 runs |
+
+`scenario-3` (Opus) saw the flakiness and fixed it properly, so it has no bug. Scenario 2 (B) is not
+recorded yet.
+
+To rerun an analysis (Windows: use a Windows-style interpreter path, e.g. from `pwd -W`):
+
+```sh
+cd payments-demo && git checkout scenario-1
+whyagent --sandbox local --good 87dc38e --line payments/client.py:43   --test "$PWD/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice"
+```

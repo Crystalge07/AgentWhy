@@ -45,7 +45,7 @@ def cmd_chart(args) -> int:
         rows = chart.fetch(conn)
     out = Path(args.report).with_name("chart.html")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(chart.render(rows))
+    out.write_text(chart.render(rows), encoding="utf-8")
     print(f"chart: {len(rows)} analyses → {out}")
     if args.open:
         webbrowser.open(out.resolve().as_uri())
@@ -55,7 +55,7 @@ def cmd_chart(args) -> int:
 def cmd_render(args) -> int:
     report = Report()
     report.clear()
-    report.update(json.loads(Path(args.render).read_text()))
+    report.update(json.loads(Path(args.render).read_text(encoding="utf-8")))
     return _finish(report, args, 0)
 
 
@@ -78,14 +78,12 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
 
     # Stage 7 — Brain first, then Gemini
     lesson, source = None, "gemini"
-    lookup = getattr(entire, "brain_lookup", None)  # A provides; absent until the Brain wrapper lands
-    if lookup is not None:
-        try:
-            error = ((rc.step.trigger or "").strip().splitlines() or [""])[-1]
-            lesson = lookup([rc.step.file], error)
-            source = "brain" if lesson else source
-        except Exception as e:
-            print(f"lesson: Brain lookup failed ({e}), writing a new one")
+    try:
+        hit = entire.brain_lookup([rc.step.file], rc.failing_output)  # a validated lesson record, or None
+        if hit:
+            lesson, source = hit["text"], "brain"
+    except Exception as e:  # noqa: BLE001
+        print(f"lesson: Brain lookup failed ({e}), writing a new one")
     if not lesson:
         try:
             lesson = make_lesson(rc)
@@ -127,13 +125,14 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     dropped = len(a_all) + len(b_all) - len(a) - len(b)
     saved = False
     if verdict == "VALIDATED" and source != "brain":
-        save = getattr(entire, "brain_save", None)
-        if save is not None:
-            try:
-                save(lesson)
-                saved = True
-            except Exception as e:
-                print(f"rerun: Brain save failed ({e})")
+        try:
+            entire.brain_save({"text": lesson, "files": [rc.step.file], "failing_output": rc.failing_output,
+                               "verdict": verdict, "p": p, "agent": agent.name, "session_id": rc.step.session_id,
+                               "step_id": rc.step.id, "runs": {"a": [r.outcome for r in a_all],
+                                                               "b": [r.outcome for r in b_all]}})
+            saved = True
+        except Exception as e:  # noqa: BLE001
+            print(f"rerun: Brain save failed ({e})")
     print(f"rerun: without lesson {ap}/{len(a)} pass · with lesson {bp}/{len(b)} pass · p = {p:.3f} → {verdict}"
           + (", saved to Brain" if saved else "") + (f" ({dropped} runs dropped as OTHER)" if dropped else ""))
     report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
@@ -147,7 +146,7 @@ def cmd_root_cause(args) -> int:
     from .replay import Replayer
     from .tiger import RunLog
 
-    fx = json.loads(Path(args.root_cause).read_text())
+    fx = json.loads(Path(args.root_cause).read_text(encoding="utf-8"))
     rc = RootCause.from_dict(fx["root_cause"])
     test = args.test or fx["test"]
     head = rc.head_state.base_commit
@@ -211,7 +210,7 @@ def cmd_analyze(args) -> int:
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
     rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
-    n = 3 if mode == "flaky" else 1
+    n = 5 if mode == "flaky" else 1  # flaky: any target failure in 5 runs counts (replay.vote)
     guilty = blamed = None
     if args.line:
         path, ln = args.line.rsplit(":", 1)
@@ -241,9 +240,37 @@ def cmd_analyze(args) -> int:
         print(f"commit {guilty[:7]} has no Entire checkpoint → human-written, stopping")
         return _finish(report, args, 0)
     print(f"checkpoint: {cp}")
-    print("stages 2–8: not wired yet (see adapters/, bisect/, rerun/)")
-    print(f"test runs used: {rp.runs}")
-    return _finish(report, args, 0)
+
+    # Stages 2–6 (A): session -> replayable edits -> blame hint -> pruning -> bisect -> confirm
+    from dataclasses import asdict
+
+    from .adapters import load_replayable
+    from .pipeline import Options, find_root_cause
+
+    try:
+        steps, fid = load_replayable(guilty)
+    except Exception as e:  # noqa: BLE001 — report it, don't crash
+        print(f"session: couldn't load the Entire session ({e})")
+        report.note(f"Couldn't load the Entire session for checkpoint {cp}: {e}")
+        return _finish(report, args, 2)
+    parent = _git("rev-parse", f"{guilty}^")
+    opts = Options(line=args.line, n=n, prune=not args.no_prune, scan=args.scan, workers=args.workers)
+    # one replayer for stages 2-8: it knows the session's edits, and its cache carries over to reruns
+    rp2 = Replayer(".", steps, args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
+    try:
+        rc = find_root_cause(".", steps, fid, guilty, parent, head, rp2, opts, report, runlog=runlog)
+        print(f"test runs used: {rp.runs + rp2.runs}")
+        if rc is None:
+            return _finish(report, args, 1)
+        rc_path = Path(args.report).with_name("root_cause.json")
+        rc_path.parent.mkdir(parents=True, exist_ok=True)
+        rc_path.write_text(json.dumps(asdict(rc), indent=2), encoding="utf-8")
+        print(f"root cause handoff: {rc_path}")
+        # Stages 7–8 (B): lesson, then counterfactual reruns
+        code = stages_7_8(rc, rp2, args, report, runlog)
+    finally:
+        runlog.close()
+    return _finish(report, args, code)
 
 
 def main(argv=None) -> int:
@@ -264,6 +291,8 @@ def main(argv=None) -> int:
     p.add_argument("--sandbox", choices=["docker", "local"], default="docker",
                    help="run tests in throwaway Docker containers (default) or directly on the host")
     p.add_argument("--no-rerun", action="store_true", help="stop after root cause")
+    p.add_argument("--no-prune", action="store_true", help="skip Graph pruning (for the pruned-vs-blind comparison)")
+    p.add_argument("--scan", action="store_true", help="test every prefix instead of bisecting (sessions < 20 edits)")
     p.add_argument("--check-entire", action="store_true", help="smoke-test the Entire connection and exit")
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")

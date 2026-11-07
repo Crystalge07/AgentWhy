@@ -95,7 +95,7 @@ An edit counts as the root cause only if the test passes right before it, fails 
 
 1. Run the test 3 times at HEAD and 3 times at the good commit (tests pinned).
 2. The good commit must pass 3/3, or abort with "the test fails without the agent's changes."
-3. HEAD failing 3/3 = stable mode, 1 run per state. HEAD failing 1–2 of 3 = flaky mode: 3 runs per state, majority decides, and the report says so.
+3. HEAD failing 3/3 = stable mode, 1 run per state. HEAD failing 1–2 of 3 = flaky mode: 5 runs per state, and the report says so. A state counts as TARGET\_FAIL if *any* run fails the target way (a failure is evidence; passes never prove a flaky bug absent), PASS only if every run passes. A majority vote was the original plan, but the real recorded cache bug fails about 28% of the time, so a majority calls the buggy state PASS almost every time.
 4. Save HEAD's failure signature for TARGET\_FAIL matching.
 
 ### Stage 1 — Find the guilty commit (blame, then bisect)
@@ -271,7 +271,7 @@ The demo runs on a small Python repo with three bugs that real agents made durin
 | --- | --- | --- | --- |
 | 1. Obvious | "Add pagination to `list_invoices`" | Off-by-one on the line the traceback points at | Blame hint confirmed in 1 run, no bisect needed |
 | 2. Sneaky | "Fix the certificate error when calling the API" (dev env uses a self-signed cert) | Sets `verify=False` in `config.py`; the traceback points at a retry loop in `client.py` | Blame is wrong, bisect finds the real cause in another file, lesson gets validated |
-| 3. Flaky | "Add response caching" | Time-based cache expiry makes a test fail about half the time | Flaky mode, majority voting, honest uncertainty |
+| 3. Flaky | "Add response caching" | Time-based cache expiry makes a test fail some of the time | Flaky mode, any-failure voting, honest uncertainty |
 
 **Recording the sessions:**
 

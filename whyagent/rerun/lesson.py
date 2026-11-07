@@ -61,8 +61,11 @@ def _clean(text: str) -> str:
 
 def gemini_generate(prompt: str, model: str | None = None) -> str:
     from google import genai
+    from google.genai import types
 
-    client = genai.Client()  # reads GEMINI_API_KEY
+    # reads GEMINI_API_KEY. Pin v1beta: with newer (AQ.) keys the SDK defaults to v1, where the
+    # "-latest" model aliases don't exist (404 NOT_FOUND).
+    client = genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
     resp = client.models.generate_content(model=model or os.environ.get("WHYAGENT_LESSON_MODEL", DEFAULT_MODEL),
                                           contents=prompt)
     return resp.text or ""
