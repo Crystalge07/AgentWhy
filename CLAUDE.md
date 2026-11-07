@@ -37,7 +37,7 @@ See the README's layout table for what's done vs TODO.
 
 ## Team and machines
 
-Team of two: Crystal (A, Mac) owns the repo; Anton (B) develops on **Windows**, so code must work on both:
+Team of two: Crystal (B, Mac) owns the repo; Anton (A) develops on **Windows**, so code must work on both:
 
 - Always decode subprocess output with `encoding="utf-8", errors="replace"`, never bare `text=True` (Windows defaults to cp1252 and crashes on Entire's `●`/`✓` output).
 - Don't hard-code `python3` (on Windows it's a Microsoft Store stub). Use `sys.executable` in tests.

@@ -3,10 +3,30 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
+from pathlib import PurePosixPath, PureWindowsPath
 
 from ..types import Step
 
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
+_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+
+
+def _rel(path: str, cwd: str | None) -> str:
+    """Absolute path from the recording machine -> repo-relative POSIX path (works across OSes)."""
+    if not cwd or not path:
+        return path
+    for P in (PurePosixPath, PureWindowsPath):
+        try:
+            return P(path).relative_to(P(cwd)).as_posix()
+        except ValueError:
+            pass
+    return path
+
+
+def _prompt_text(content) -> str:
+    """User prompt with harness-injected <system-reminder> blocks removed."""
+    return _REMINDER.sub("", _text_of(content)).strip()
 
 
 def _text_of(content) -> str:
@@ -40,8 +60,11 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
     reasoning: str | None = None
     trigger: str | None = None
     files: dict[str, str] = {}  # last known content, for Write hunking
+    seen: set[str] = set()  # Entire transcripts can repeat a tool_use record; apply each id once
+    cwd: str | None = None
 
     def add(file, kind, old, new):
+        file = _rel(file, cwd)
         steps.append(Step(id=len(steps) + 1, session_id=session_id, agent="claude-code", file=file,
                           kind=kind, old_text=old, new_text=new, reasoning=reasoning,
                           trigger=trigger, prompt=prompt))
@@ -54,13 +77,14 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
         except json.JSONDecodeError:
             continue
         session_id = session_id or rec.get("sessionId", "")
+        cwd = rec.get("cwd") or cwd
         msg = rec.get("message") or {}
         content = msg.get("content")
         if rec.get("type") == "user":
             if isinstance(content, list) and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
                 trigger = _text_of(content) or trigger
             else:
-                prompt = _text_of(content) or prompt
+                prompt = _prompt_text(content) or prompt
                 reasoning, trigger = None, None
         elif rec.get("type") == "assistant" and isinstance(content, list):
             for c in content:
@@ -70,6 +94,10 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                     if txt.strip():
                         reasoning = txt
                 elif t == "tool_use" and c.get("name") in EDIT_TOOLS:
+                    if c.get("id"):
+                        if c["id"] in seen:
+                            continue
+                        seen.add(c["id"])
                     inp = c.get("input", {})
                     f = inp.get("file_path", "")
                     if c["name"] == "Edit":
