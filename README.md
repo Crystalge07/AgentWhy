@@ -10,6 +10,8 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/whyagent --check-entire   # smoke-test the Entire connection
 ```
 
+On Windows (PowerShell) use `python -m venv .venv` and `.venv\Scripts\...` in place of `.venv/bin/...`.
+
 ## Usage
 
 ```sh

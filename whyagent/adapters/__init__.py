@@ -24,7 +24,7 @@ def load_session(commit: str, cwd: str = ".") -> list[Step]:
     steps: list[Step] = []
     for i, sess in enumerate(meta.get("sessions", [])):
         raw = subprocess.run(["entire", "checkpoint", "explain", cp, "--transcript", "--session-index", str(i)],
-                             cwd=cwd, capture_output=True, text=True, check=True).stdout
+                             cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
         for s in parse(raw, sess.get("agent", "claude-code").lower().replace(" ", "-"), sess.get("session_id", "")):
             s.id = len(steps) + 1
             steps.append(s)

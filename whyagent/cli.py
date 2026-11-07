@@ -10,7 +10,7 @@ from .types import PASS, TARGET_FAIL, State
 
 
 def _git(*a) -> str:
-    return subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["git", *a], capture_output=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
 
 def cmd_check_entire(_args) -> int:
@@ -77,6 +77,10 @@ def cmd_analyze(args) -> int:
 
 
 def main(argv=None) -> int:
+    # Windows consoles/pipes default to cp1252, which can't print the ✓/✗ marks.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(prog="whyagent", description="Find which agent decision broke a test, and prove it.")
     p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
     p.add_argument("--good", help="commit where the test passes")

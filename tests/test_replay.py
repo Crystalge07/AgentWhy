@@ -1,11 +1,12 @@
 import subprocess
+import sys
 
 from whyagent.replay import Replayer
 from whyagent.types import PASS, TARGET_FAIL, State, Step
 
 
 def git(cwd, *a):
-    return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["git", *a], cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
 
 def test_build_and_run(tmp_path):
@@ -19,7 +20,7 @@ def test_build_and_run(tmp_path):
     git(tmp_path, "commit", "-qm", "base")
     base = git(tmp_path, "rev-parse", "HEAD")
     steps = [Step(1, "s", "claude-code", "app.py", "edit", "OK = True", "OK = False")]
-    rp = Replayer(str(tmp_path), steps, "python3 tests/check.py")
+    rp = Replayer(str(tmp_path), steps, f'"{sys.executable}" tests/check.py')
     assert rp.run(State(base, [], base))[0].outcome == PASS
     assert rp.run(State(base, [1], base))[0].outcome == TARGET_FAIL
     rp.run(State(base, [1], base))  # cached
