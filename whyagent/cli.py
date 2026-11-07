@@ -77,6 +77,9 @@ def cmd_analyze(args) -> int:
 
 
 def main(argv=None) -> int:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # reads .env (gitignored) into the environment
     p = argparse.ArgumentParser(prog="whyagent", description="Find which agent decision broke a test, and prove it.")
     p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
     p.add_argument("--good", help="commit where the test passes")
