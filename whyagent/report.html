@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent report</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1b1d21; --muted: #6b7079; --line: #e3e3df;
+  --pass: #1f8a4c; --pass-bg: #e6f4ec; --fail: #c4352b; --fail-bg: #fbe9e7;
+  --other: #9a6b00; --other-bg: #fbf1d9; --accent: #3b5bdb; --accent-bg: #e8edfd;
+  --code-bg: #f1f1ee; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121316; --panel: #1b1d21; --ink: #e8e8e6; --muted: #9196a0; --line: #2c2f35;
+    --pass: #4cc483; --pass-bg: #173323; --fail: #f0685c; --fail-bg: #3a1c19;
+    --other: #e0b04a; --other-bg: #352a12; --accent: #7d97f5; --accent-bg: #1f2747; --code-bg: #15171a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121316; --panel: #1b1d21; --ink: #e8e8e6; --muted: #9196a0; --line: #2c2f35;
+  --pass: #4cc483; --pass-bg: #173323; --fail: #f0685c; --fail-bg: #3a1c19;
+  --other: #e0b04a; --other-bg: #352a12; --accent: #7d97f5; --accent-bg: #1f2747; --code-bg: #15171a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+code, pre, .mono { font-family: var(--mono); font-size: 13px; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  margin: 36px 0 12px; font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+.muted { color: var(--muted); }
+.banner { background: var(--other-bg); color: var(--other); border-radius: 8px; padding: 8px 12px;
+  margin-bottom: 16px; font-size: 14px; }
+
+header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: -.01em; }
+.brand span { color: var(--muted); font-weight: 400; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; }
+.meta code { color: var(--ink); }
+
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  font-family: var(--mono); white-space: nowrap; }
+.PASS { color: var(--pass); background: var(--pass-bg); }
+.TARGET_FAIL, .FAIL, .TAMPERED { color: var(--fail); background: var(--fail-bg); }
+.OTHER { color: var(--other); background: var(--other-bg); }
+.INFO { color: var(--accent); background: var(--accent-bg); }
+
+.verdict { margin-top: 20px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+.verdict h1 { font-size: 26px; line-height: 1.25; margin: 4px 0 10px; letter-spacing: -.015em; }
+.verdict h1 code { font-size: 22px; }
+.proofs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.proofs li { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; }
+.tick { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; }
+.tick.ok { background: var(--pass-bg); color: var(--pass); }
+.tick.no { background: var(--line); color: var(--muted); }
+.blame-miss { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--other);
+  background: var(--other-bg); border-radius: 0 8px 8px 0; font-size: 14px; }
+
+.pipeline { list-style: none; margin: 0; padding: 0; }
+.pipeline li { display: grid; grid-template-columns: 18px 92px 1fr; gap: 10px; padding: 7px 0;
+  border-bottom: 1px solid var(--line); align-items: baseline; }
+.pipeline li:last-child { border-bottom: 0; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dot.done { background: var(--pass); } .dot.warn { background: var(--other); }
+.dot.todo { border: 1.5px solid var(--line); }
+.stage { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.pipeline li.todo .msg { color: var(--muted); }
+
+.strip-wrap { overflow-x: auto; padding-bottom: 6px; }
+.strip { display: grid; gap: 4px; min-width: max-content; }
+.cell { position: relative; width: 56px; height: 64px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--panel); cursor: pointer; padding: 6px 5px; text-align: left; color: var(--ink);
+  font: inherit; display: flex; flex-direction: column; justify-content: space-between; }
+.cell:hover { border-color: var(--muted); }
+.cell .num { font-weight: 700; font-size: 13px; }
+.cell .file { font-family: var(--mono); font-size: 10px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.cell.pruned { opacity: .45; background: repeating-linear-gradient(135deg, transparent 0 5px, var(--line) 5px 6px); }
+.cell.cause { border: 2px solid var(--fail); background: var(--fail-bg); }
+.cell.blame { border: 2px dashed var(--other); }
+.cell.collateral { border: 2px solid var(--other); }
+.cell.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cell .tag { position: absolute; top: -9px; right: 4px; font-size: 10px; font-weight: 700;
+  padding: 0 5px; border-radius: 4px; }
+.cell.cause .tag { background: var(--fail); color: #fff; }
+.cell.blame .tag { background: var(--other); color: #fff; }
+.probe { height: 22px; display: flex; align-items: center; justify-content: center; }
+.probe .chip { font-size: 10px; padding: 0 5px; }
+.boundary { border-left: 2px solid var(--fail); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+
+.detail { margin-top: 14px; display: grid; gap: 14px; }
+.detail-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.detail-head h3 { margin: 0; font-size: 17px; }
+.label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.quote { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--accent-bg); border-radius: 0 8px 8px 0; font-style: italic; }
+.trigger { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; max-height: 220px; overflow: auto; }
+.diff { background: var(--code-bg); border-radius: 8px; padding: 8px 0; overflow-x: auto; }
+.diff div { padding: 0 12px; white-space: pre; font-family: var(--mono); font-size: 13px; }
+.diff .del { background: var(--fail-bg); color: var(--fail); }
+.diff .add { background: var(--pass-bg); color: var(--pass); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.lesson { font-size: 18px; font-weight: 600; margin: 4px 0 14px; }
+.arms { display: grid; gap: 10px; }
+.arm { display: grid; grid-template-columns: 150px 1fr auto; gap: 12px; align-items: center; }
+.pips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pip { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.pip.PASS { background: var(--pass); color: #fff; }
+.pip.FAIL, .pip.TARGET_FAIL { background: var(--fail-bg); color: var(--fail); border: 1px solid var(--fail); }
+.pip.TAMPERED { background: var(--fail-bg); color: var(--fail); border: 1px dashed var(--fail); }
+.pip.OTHER { background: var(--other-bg); color: var(--other); }
+.stat { font-family: var(--mono); font-weight: 700; }
+.verdict-row { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.verdict-row .chip { font-size: 13px; padding: 3px 10px; }
+
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 110px 1fr 36px; gap: 10px; align-items: center; font-size: 13px; }
+.bar .track { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--line); }
+td.num { text-align: right; font-family: var(--mono); }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 12px; }
+.notes { margin: 0; padding-left: 18px; }
+
+@media (max-width: 760px) {
+  .verdict, .two { grid-template-columns: 1fr; }
+  .arm { grid-template-columns: 1fr; gap: 4px; }
+  .pipeline li { grid-template-columns: 18px 1fr; }
+  .pipeline .msg { grid-column: 2; }
+  .verdict h1 { font-size: 21px; }
+}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script id="whyagent-data" type="application/json">/*__WHYAGENT_DATA__*/null</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("whyagent-data").textContent) || {};
+const app = document.getElementById("app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const short = s => s ? String(s).slice(0, 7) : "?";
+const chip = (o, txt) => `<span class="chip ${esc(o)}">${esc(txt ?? (o === "TARGET_FAIL" ? "FAIL" : o))}</span>`;
+const m = D.meta || {}, pre = D.precheck, cm = D.commit, ses = D.session, bh = D.blame_hint,
+      pr = D.pruning, bi = D.bisect, cf = D.confirm, rc = D.root_cause, ls = D.lesson, rr = D.rerun;
+const steps = (ses && ses.steps) || [];
+const byId = Object.fromEntries(steps.map(s => [s.id, s]));
+const cause = rc && byId[rc.step_id];
+const loc = s => s ? `${s.file}${s.line ? ":" + s.line : ""}` : "";
+const testName = (m.test || "").split(/\s+/).find(w => w.includes("::")) || m.test || "the test";
+
+let html = "";
+if (m.sample) html += `<div class="banner">Sample data for layout. This report was not produced by a real run.</div>`;
+
+// Header
+html += `<header><div class="brand">whyagent <span>report</span></div>
+  <div class="meta"><span>test <code>${esc(m.test)}</code></span>
+  <span>range <code>${short(m.good)}..${short(m.head)}</code></span>
+  ${m.repo ? `<span>repo <code>${esc(m.repo)}</code></span>` : ""}
+  ${m.generated_at ? `<span>${esc(m.generated_at.replace("T", " "))}</span>` : ""}</div></header>`;
+
+// Verdict
+const pAfter = bi && bi.probes && bi.probes.find(p => p.after_step === (rc && rc.step_id));
+const idx = cause ? steps.indexOf(cause) : -1;
+const prevKept = idx > 0 ? steps.slice(0, idx).filter(s => !(pr && (pr.pruned || []).includes(s.id))).pop() : null;
+// P(0) is the guilty commit's parent, which passes by construction (Stage 1)
+const pBefore = !cause ? null : !prevKept ? {outcome: "PASS"} : bi && bi.probes && bi.probes.find(p => p.after_step === prevKept.id);
+let headline, sub;
+if (cause) {
+  headline = `Edit #${cause.id} in <code>${esc(loc(cause))}</code> broke <code>${esc(testName.split("::").pop())}</code>`;
+  sub = `${esc(ses.agent || "agent")} session <code>${esc(ses.id)}</code>, commit <code>${short(cm && cm.sha)}</code>`;
+} else if (cm && cm.human) {
+  headline = `Commit <code>${short(cm.sha)}</code> broke it, and a human wrote it`;
+  sub = "No Entire checkpoint on that commit, so there's no agent session to analyze.";
+} else if (cm) {
+  headline = `Commit <code>${short(cm.sha)}</code> broke <code>${esc(testName.split("::").pop())}</code>`;
+  sub = "Edit-level analysis hasn't run yet.";
+} else if (pre) {
+  headline = "Analysis stopped at precheck"; sub = "";
+} else { headline = "No results"; sub = ""; }
+
+const proof = (ok, txt, right) => `<li><span class="tick ${ok ? "ok" : "no"}">${ok ? "✓" : "–"}</span><span>${txt}</span>${right || ""}</li>`;
+html += `<section class="verdict">
+  <div class="panel"><div class="label">Root cause</div><h1>${headline}</h1><div class="muted">${sub}</div>
+  ${bh && !bh.is_cause ? `<div class="blame-miss"><b>Blame was wrong.</b> <code>${esc(bh.line)}</code> was last written by edit ${bh.step_ids.map(i => "#" + i).join(", ")}, but reverting ${bh.step_ids.length > 1 ? "them" : "it"} still fails the test. The real cause is ${cause ? `edit #${cause.id} in <code>${esc(cause.file)}</code>` : "elsewhere"}.</div>` : ""}
+  ${bh && bh.is_cause ? `<div class="blame-miss" style="border-color:var(--pass);background:var(--pass-bg)"><b>Blame was right.</b> Reverting the edit behind <code>${esc(bh.line)}</code> makes the test pass.</div>` : ""}
+  </div>
+  <div class="panel"><div class="label">Proven by test runs</div><ul class="proofs">
+    ${proof(pBefore && pBefore.outcome === "PASS", `Passes right before the edit`, pBefore ? chip(pBefore.outcome) : "")}
+    ${proof(pAfter && pAfter.outcome === "TARGET_FAIL", `Fails right after it`, pAfter ? chip(pAfter.outcome) : "")}
+    ${proof(cf && cf.outcome === "PASS", `Passes when it's reverted from the final code`, cf ? chip(cf.outcome) : "")}
+  </ul>
+  <div class="muted" style="margin-top:14px;font-size:13px">${(D.runs || []).length} test runs total${pre ? ` · ${esc(pre.mode)} mode` : ""}</div></div>
+</section>`;
+
+// Pipeline
+const st = [];
+const S = (n, name, state, msg) => st.push({n, name, state, msg});
+S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}` : "");
+S(1, "commit", cm ? "done" : "todo", cm ? (cm.method === "blame" ? `blamed ${short(cm.sha)} ✓ confirmed (parent passes, commit fails)` : `${cm.blamed ? `blame hint ${short(cm.blamed)} wrong, ` : ""}bisected → ${short(cm.sha)}`) + (cm.checkpoint ? ` · checkpoint ${cm.checkpoint}` : "") + (cm.human ? " · no checkpoint, human-written" : "") : "");
+S(2, "session", ses ? (ses.replay_matches === false || ses.unattributed ? "warn" : "done") : "todo", ses ? `${esc(ses.id)} · ${steps.length} edits · replay ${ses.replay_matches ? "matches commit ✓" : "differs, leftover diff kept as an unattributed edit"}` : "");
+S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : "");
+S(4, "pruning", pr ? (pr.verified ? "done" : "warn") : "todo", pr ? (pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
+S(5, "bisect", bi ? "done" : "todo", bi ? `${steps.length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
+S(6, "confirm", cf ? (cf.outcome === "PASS" ? "done" : "warn") : "todo", cf ? (cf.outcome === "PASS" ? `revert #${cf.step_id} from final → test passes ✓ root cause${cf.collateral && cf.collateral.length ? ` (collateral ${cf.collateral.map(i => "#" + i).join(", ")})` : ""}` : `revert #${cf.step_id} still fails → ddmin ${cf.ddmin ? "→ {" + cf.ddmin.join(", ") + "}" : "inconclusive"}`) : "");
+S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : "written by " + esc(ls.source || "Gemini")}` : "");
+S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${rr.a.length} · with lesson ${count(rr.b)}/${rr.b.length} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");
+function count(a) { return a.filter(x => x === "PASS").length; }
+function fmtP(p) { return p == null ? "?" : p < 0.001 ? p.toExponential(1) : p.toFixed(3); }
+html += `<h2>Pipeline</h2><div class="panel"><ul class="pipeline">${st.map(s => `<li class="${s.state}"><span class="dot ${s.state}"></span><span class="stage">${s.n} ${s.name}</span><span class="msg">${s.msg || "not reached"}</span></li>`).join("")}</ul></div>`;
+
+// Session strip
+if (steps.length) {
+  const pruned = new Set((pr && pr.verified && pr.pruned) || []);
+  const blameIds = new Set((bh && bh.step_ids) || []);
+  const collat = new Set((cf && cf.collateral) || []);
+  const probes = Object.fromEntries(((bi && bi.probes) || []).map(p => [p.after_step, p.outcome]));
+  const cols = `repeat(${steps.length + 1}, 56px)`;
+  let cells = `<div class="cell" style="cursor:default;opacity:.8" title="Base: the guilty commit's parent"><span class="num">base</span><span class="file">${short(cm && cm.sha)}^</span></div>`;
+  let probeRow = `<div class="probe">${probes[0] ? chip(probes[0]) : chip("PASS")}</div>`;
+  for (const s of steps) {
+    const cls = ["cell", pruned.has(s.id) && "pruned", rc && s.id === rc.step_id && "cause", blameIds.has(s.id) && !(rc && s.id === rc.step_id) && "blame", collat.has(s.id) && "collateral"].filter(Boolean).join(" ");
+    const tag = rc && s.id === rc.step_id ? "CAUSE" : blameIds.has(s.id) ? "BLAME" : "";
+    cells += `<button class="${cls}" data-id="${s.id}" title="${esc(loc(s))}">${tag ? `<span class="tag">${tag}</span>` : ""}<span class="num">#${s.id}</span><span class="file">${esc(s.file.split("/").pop())}</span></button>`;
+    probeRow += `<div class="probe">${probes[s.id] ? chip(probes[s.id]) : ""}</div>`;
+  }
+  html += `<h2>Session · ${esc(ses.agent || "")}</h2><div class="panel">
+    ${ses.prompt ? `<div class="label">Task</div><div style="margin-bottom:14px">${esc(ses.prompt)}</div>` : ""}
+    <div class="label">Edits in order, with the test result of the code after each tested prefix</div>
+    <div class="strip-wrap"><div class="strip" style="grid-template-columns:${cols}">${cells}${probeRow}</div></div>
+    <div class="legend"><span><i style="border:2px solid var(--fail);background:var(--fail-bg)"></i>root cause</span>
+      <span><i style="border:2px dashed var(--other)"></i>blame hint</span>
+      ${pruned.size ? `<span><i style="background:repeating-linear-gradient(135deg,transparent 0 3px,var(--muted) 3px 4px);opacity:.5"></i>pruned by Graph</span>` : ""}
+      ${collat.size ? `<span><i style="border:2px solid var(--other)"></i>collateral</span>` : ""}
+      <span>click an edit for its reasoning and diff</span></div>
+    <div class="detail" id="detail"></div></div>`;
+}
+
+// Lesson + reruns
+if (ls || rr) {
+  const vc = {VALIDATED: "PASS", PROMISING: "OTHER", NOT_NEEDED: "INFO", INEFFECTIVE: "TARGET_FAIL"};
+  const pips = a => a.map(o => `<span class="pip ${esc(o)}" title="${esc(o)}">${o === "PASS" ? "✓" : o === "TAMPERED" ? "T" : o === "OTHER" ? "?" : "✗"}</span>`).join("");
+  html += `<h2>Lesson</h2><div class="panel">
+    ${ls ? `<div class="label">${ls.source === "brain" ? "From Entire Brain" : "Proposed lesson"}</div><div class="lesson">“${esc(ls.text)}”</div>` : ""}
+    ${rr ? `<div class="label">Counterfactual reruns from the code right before the guilty edit · agent: ${esc(rr.agent || "?")}</div>
+    <div class="arms">
+      <div class="arm"><span>Without lesson</span><div class="pips">${pips(rr.a)}</div><span class="stat">${count(rr.a)}/${rr.a.length} pass</span></div>
+      <div class="arm"><span>With lesson</span><div class="pips">${pips(rr.b)}</div><span class="stat">${count(rr.b)}/${rr.b.length} pass</span></div>
+    </div>
+    <div class="verdict-row"><span class="chip ${vc[rr.verdict] || "INFO"}">${esc(rr.verdict)}</span>
+      <span class="mono">one-sided Fisher p = ${fmtP(rr.p)}</span>
+      ${rr.saved_to_brain ? `<span class="muted">saved to Entire Brain</span>` : `<span class="muted">not saved</span>`}
+      ${rr.a.includes("TAMPERED") || rr.b.includes("TAMPERED") ? `<span class="muted">T = edited the tests, counted as a failure</span>` : ""}</div>
+    <div class="muted" style="font-size:13px;margin-top:8px">Both arms use the same rerun agent, so this shows the lesson helps ${esc(rr.agent || "that agent")}. Reruns start from a summary of earlier edits, not the original agent's memory.</div>` : ""}
+  </div>`;
+}
+
+// Runs
+const runs = D.runs || [];
+if (runs.length) {
+  const byStage = {};
+  runs.forEach(r => byStage[r.stage] = (byStage[r.stage] || 0) + 1);
+  const max = Math.max(...Object.values(byStage));
+  html += `<h2>Test runs</h2><div class="panel"><div class="two"><div>
+    <div class="label">Runs per stage</div><div class="bars">${Object.entries(byStage).map(([k, v]) => `<div class="bar"><span>${esc(k)}</span><div class="track"><div class="fill" style="width:${v / max * 100}%"></div></div><span class="mono">${v}</span></div>`).join("")}</div></div>
+    <div>${pr && pr.runs_without != null ? `<div class="label">Graph pruning savings</div><div class="bars">
+      <div class="bar"><span>with pruning</span><div class="track"><div class="fill" style="width:${pr.runs_with / Math.max(pr.runs_with, pr.runs_without) * 100}%"></div></div><span class="mono">${pr.runs_with}</span></div>
+      <div class="bar"><span>blind bisect</span><div class="track"><div class="fill" style="width:${pr.runs_without / Math.max(pr.runs_with, pr.runs_without) * 100}%;background:var(--muted)"></div></div><span class="mono">${pr.runs_without}</span></div></div>` :
+      `<div class="label">Total</div><div style="font-size:28px;font-weight:700">${runs.length}</div><div class="muted">test runs, ${(runs.reduce((a, r) => a + (r.duration_ms || 0), 0) / 1000).toFixed(1)} s of test time</div>`}</div></div>
+    <details><summary>All ${runs.length} runs</summary><table><thead><tr><th>#</th><th>Stage</th><th>State</th><th>Outcome</th><th style="text-align:right">ms</th></tr></thead><tbody>
+    ${runs.map((r, i) => `<tr><td class="num">${i + 1}</td><td>${esc(r.stage)}</td><td class="mono">${esc(r.label)}</td><td>${chip(r.outcome)}</td><td class="num">${r.duration_ms ?? ""}</td></tr>`).join("")}
+    </tbody></table></details></div>`;
+}
+
+if ((D.notes || []).length) html += `<h2>Notes</h2><div class="panel"><ul class="notes">${D.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>`;
+
+app.innerHTML = html;
+
+// Edit detail
+function diffLines(a, b) {
+  const out = [];
+  (a ? a.split("\n") : []).forEach(l => out.push(`<div class="del">- ${esc(l)}</div>`));
+  (b ? b.split("\n") : []).forEach(l => out.push(`<div class="add">+ ${esc(l)}</div>`));
+  return out.join("");
+}
+function show(id) {
+  const s = byId[id], el = document.getElementById("detail");
+  if (!s || !el) return;
+  document.querySelectorAll(".cell.sel").forEach(c => c.classList.remove("sel"));
+  const c = document.querySelector(`.cell[data-id="${id}"]`); if (c) c.classList.add("sel");
+  const tags = [];
+  if (rc && s.id === rc.step_id) tags.push(chip("TARGET_FAIL", "root cause"));
+  if (bh && bh.step_ids.includes(s.id)) tags.push(chip("OTHER", bh.is_cause ? "blame hint ✓" : "blame hint, not the cause"));
+  if (pr && pr.verified && pr.pruned.includes(s.id)) tags.push(chip("INFO", "pruned"));
+  if (s.kind && s.kind !== "edit") tags.push(chip("INFO", s.kind));
+  el.innerHTML = `<div class="detail-head"><h3>Edit #${s.id} · <code>${esc(loc(s))}</code></h3>${tags.join("")}</div>
+    ${s.reasoning || s.trigger ? `<div class="two">
+      <div><div class="label">What the agent was reacting to</div>${s.trigger ? `<pre class="trigger">${esc(s.trigger)}</pre>` : `<div class="muted">No tool output right before this edit.</div>`}</div>
+      <div><div class="label">Agent's reasoning</div>${s.reasoning ? `<div class="quote">${esc(s.reasoning)}</div>` : `<div class="muted">Not recorded (hidden thinking).</div>`}</div></div>` : `<div class="muted">No reasoning or trigger recorded for this edit.</div>`}
+    <div><div class="label">Diff</div><div class="diff">${diffLines(s.old_text, s.new_text)}</div></div>
+    ${rc && s.id === rc.step_id && rc.failing_output ? `<div><div class="label">Failing test output at HEAD</div><pre class="trigger">${esc(rc.failing_output)}</pre></div>` : ""}`;
+}
+document.querySelectorAll(".cell[data-id]").forEach(c => c.addEventListener("click", () => show(+c.dataset.id)));
+if (steps.length) show(rc ? rc.step_id : steps[0].id);
+})();
+</script>
+</body>
+</html>

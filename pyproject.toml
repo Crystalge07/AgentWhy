@@ -18,5 +18,8 @@ whyagent = "whyagent.cli:main"
 [tool.setuptools.packages.find]
 include = ["whyagent*"]
 
+[tool.setuptools.package-data]
+whyagent = ["report.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
