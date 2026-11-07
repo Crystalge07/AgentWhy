@@ -132,3 +132,13 @@ def test_parallel_bisect_on_worker_pool_and_tiger_flag(tmp_path):
     assert rc is not None and rc.step.id == 3 and report["bisect"]["boundary"] == 3
     assert log.pruned is True and "bisect" in log.rows and "prune" in log.rows
     assert len(git(tmp_path, "worktree", "list").splitlines()) == 1  # every temp worktree cleaned up
+
+
+def test_flaky_runs_bounds_the_chance_of_a_false_pass():
+    from whyagent.pipeline import flaky_runs
+
+    assert flaky_runs(1, 5) == 14 and flaky_runs(2, 5) == 10 and flaky_runs(4, 5) == 10
+    assert (1 - 0.28) ** flaky_runs(3, 5) < 0.05  # the recorded cache bug, even when precheck sees 3/5
+    for fails in range(1, 5):
+        k, f = flaky_runs(fails, 5), fails / 5
+        assert (1 - f) ** k <= 0.05 or k == 15

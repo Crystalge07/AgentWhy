@@ -48,6 +48,22 @@ def trigger_line(trigger: str | None) -> str:
 decide = vote  # one flaky-mode rule for everyone: replay.vote
 
 
+def flaky_runs(fails: int, n: int, alpha: float = 0.05, lo: int = 10, hi: int = 15) -> int:
+    """Runs per state in flaky mode, from the precheck's failure count at HEAD (`fails` of `n`).
+
+    A state counts as failing if any run fails, so the error that matters is a buggy state passing
+    all k runs by chance: (1 - f)^k. Pick the smallest k with that <= alpha, clamped to [lo, hi].
+    Measured on the recorded cache bug (f ~ 0.28): 5 runs missed it ~19% of the time and bisect named
+    the wrong edit; f = 1/5 gives 14 runs. The floor of 10 is because a 5-run precheck is a noisy
+    estimate (that same bug often shows 3/5 = 60%): at the true 28%, 10 runs miss it ~3.7% of the time.
+    """
+    import math
+
+    f = min(max(fails / n, 1e-9), 1 - 1e-9) if n else 0.5
+    k = math.ceil(math.log(alpha) / math.log(1 - f))
+    return max(lo, min(hi, k))
+
+
 def _show(repo: str, rev: str, path: str) -> str | None:
     p = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=repo, capture_output=True)
     return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import entire
 from .report import Report, state_label
+from .pipeline import flaky_runs
 from .types import PASS, TARGET_FAIL, RootCause, State
 
 
@@ -228,7 +229,12 @@ def cmd_analyze(args) -> int:
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
     rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
-    n = 5 if mode == "flaky" else 1  # flaky: any target failure in 5 runs counts (replay.vote)
+    # flaky: any target failure counts (replay.vote), so the risk is a buggy state passing every run by
+    # chance. Size n from the measured failure rate so that risk stays <= 5% per state.
+    n = flaky_runs(h_fail, N) if mode == "flaky" else 1
+    report["precheck"]["runs_per_state"] = n
+    if mode == "flaky":
+        print(f"flaky mode: {n} runs per state (a buggy state passes them all by chance <= 5% of the time)")
     guilty = blamed = None
     if args.line:
         path, ln = args.line.rsplit(":", 1)
