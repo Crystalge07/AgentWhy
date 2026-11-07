@@ -226,3 +226,86 @@ def test_baseline_leaves_out_tests_the_session_added():
     rr.prepare(rc)
     assert rr._baseline == {"tests/t.py::old_behaviour"}
     assert rr.excluded == ["tests/t.py::iter_all_invoices_new"]
+
+
+class _SeqRP:
+    """Fake Replayer: every exec of `cmd` pops the next exit code / output from a script."""
+    timeout = 10
+    test_cmd = "target"
+    test_globs = ["tests/*"]
+
+    def __init__(self, tmp_path, script):
+        from types import SimpleNamespace
+        self.d, self.script = str(tmp_path), script
+        self.sandbox = SimpleNamespace(exec=self._exec)
+
+    def _exec(self, d, cmd, timeout, **_):
+        from types import SimpleNamespace
+        code, out = self.script[cmd].pop(0) if isinstance(self.script[cmd], list) else self.script[cmd]
+        return SimpleNamespace(exit_code=code, output=out, timed_out=False)
+
+    def build(self, state):
+        return self.d
+
+    def teardown(self, d):
+        pass
+
+
+def test_flaky_target_must_pass_every_run(tmp_path):
+    rp = _SeqRP(tmp_path, {"agent": (0, "done"), "target": [(0, ""), (0, ""), (1, "boom")]})
+    rr = Reruns(rp, Agent("fake", "agent", network="none"), suite_cmd=None, target_runs=3)
+    r = rr.one(_rc("abc"), None, "A")
+    assert r.outcome == "FAIL" and "run 3 of 3" in r.detail
+
+
+def test_regression_needs_to_repeat(tmp_path):
+    """A test lost once under load but back on the second suite run isn't a regression."""
+    rp = _SeqRP(tmp_path, {"agent": (0, "done"), "target": (0, ""),
+                           "suite": [(1, "PASSED t::a"), (0, "PASSED t::a\nPASSED t::b")]})
+    rr = Reruns(rp, Agent("fake", "agent", network="none"), suite_cmd="suite")
+    rr._prepared, rr._baseline = True, {"t::a", "t::b"}
+    assert rr.one(_rc("abc"), None, "A").outcome == "PASS"
+
+
+def test_unbuildable_start_state_is_other(tmp_path):
+    rp = _SeqRP(tmp_path, {})
+    rp.build = lambda state: (_ for _ in ()).throw(ValueError("step 3: old_text not found"))
+    rr = Reruns(rp, Agent("fake", "agent", network="none"), suite_cmd=None)
+    rr._prepared = True
+    r = rr.one(_rc("abc"), None, "B")
+    assert r.outcome == "OTHER" and "old_text" in r.detail
+
+
+def test_stub_agent_and_missing_auth(monkeypatch):
+    from whyagent.rerun import ClaudeCode, GeminiCLI, Stub, agent_by_name
+
+    monkeypatch.setenv("WHYAGENT_STUB_CMD", "echo hi")
+    s = agent_by_name("stub")
+    assert isinstance(s, Stub) and s.command == "echo hi" and s.network == "none" and s.missing_auth() is None
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    for k in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    assert "GEMINI_API_KEY" in GeminiCLI().missing_auth()
+    assert "ANTHROPIC_API_KEY" in ClaudeCode().missing_auth()
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert GeminiCLI().missing_auth() is None
+
+
+def test_stages_7_8_without_any_keys(monkeypatch):
+    """No Gemini key and no --lesson: Stage 7 is skipped, no API call; no agent auth: Stage 8 stops before building."""
+    from argparse import Namespace
+
+    from whyagent import cli, entire
+    from whyagent.report import Report
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(entire, "brain_lookup", lambda *a: None)
+    monkeypatch.setattr("whyagent.rerun.make_lesson", lambda rc: pytest.fail("called Gemini"))
+    rep = Report()
+    args = Namespace(lesson=None, no_rerun=True, sandbox="docker", rerun_agent="gemini-cli", runs=5, workers=1)
+    assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 0
+    assert any("Lesson skipped" in n for n in rep.get("notes", []))
+    args = Namespace(lesson="Do X.", no_rerun=False, sandbox="docker", rerun_agent="gemini-cli", runs=5, workers=1)
+    rep = Report()
+    assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 1
+    assert rep["rerun"]["verdict"] == "INCONCLUSIVE"

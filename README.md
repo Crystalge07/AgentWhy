@@ -56,9 +56,10 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--no-prune` | Skip Graph pruning (for the pruned-vs-blind comparison) |
 | `--scan` | Test every prefix instead of bisecting (sessions under 20 edits; finds flip-flops) |
 | `--no-rerun` | Stop after the lesson; skip the counterfactual reruns |
-| `--runs N` | Reruns per arm in Stage 8 (default 5) |
-| `--rerun-agent gemini-cli\|claude-code` | Agent for the reruns (same agent in both arms) |
-| `--lesson TEXT` | Test this lesson instead of asking Gemini to write one |
+| `--runs N` | Reruns per arm in Stage 8 (default 5). Below 4 the Fisher test can never reach p < 0.05; at 5, VALIDATED needs a gap of 4 passes (e.g. 0/5 vs 4/5) |
+| `--rerun-agent gemini-cli\|claude-code\|stub` | Agent for the reruns (same agent in both arms). `stub` runs `$WHYAGENT_STUB_CMD` with no model, to rehearse Stage 8. Missing API keys stop Stage 8 before any image is built |
+| `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
+| `--lesson TEXT` | Test this lesson instead of asking Gemini to write one (without it and without `GEMINI_API_KEY`, Stage 7 is skipped) |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
@@ -84,8 +85,8 @@ Every test run is `PASS`, `TARGET_FAIL` (same signature as HEAD) or `OTHER` (nev
 
 ## Status (2026-11-07)
 
-- **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 77 unit tests.
-- **Stages 7–8 are wired and unit-tested, but not yet run end to end with a real model.** Blocked on a Gemini key with quota or an Anthropic API key. `--lesson` lets Stage 8 run without Gemini.
+- **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 85 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
+- **Stages 7–8 are wired and unit-tested, but not yet run end to end with a real model.** Blocked on a Gemini key with quota or an Anthropic API key. `--lesson` lets Stage 8 run without Gemini; `--rerun-agent stub` rehearses it with no model at all.
 - **Not tried yet:** Vultr VM, the worker pool with more than 2 workers on real sessions, the egress proxy outside the tests.
 - Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a local JSONL store (`~/.whyagent/brain.jsonl` or `WHYAGENT_BRAIN`) mirrored to a `lessons` table in Tiger Data, so validated lessons are shared across the team.
 - `whyagent --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
