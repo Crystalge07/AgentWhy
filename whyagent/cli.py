@@ -81,6 +81,10 @@ def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+
+    from dotenv import load_dotenv
+
+    load_dotenv()  # reads .env (gitignored) into the environment
     p = argparse.ArgumentParser(prog="whyagent", description="Find which agent decision broke a test, and prove it.")
     p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
     p.add_argument("--good", help="commit where the test passes")

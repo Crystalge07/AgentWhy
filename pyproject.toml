@@ -7,7 +7,7 @@ name = "whyagent"
 version = "0.1.0"
 description = "git blame for agent decisions: find which agent edit broke a test, prove it, and validate the lesson."
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["psycopg[binary]>=3.1", "google-genai>=1.0", "python-dotenv>=1.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
