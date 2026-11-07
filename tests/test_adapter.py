@@ -96,3 +96,22 @@ def test_view_only_commands_are_not_triggers():
     assert not _is_view_only("cd /repo && python scripts/smoke_dev.py")
     assert not _is_view_only("sed -i 's/a/b/' x.py")
     assert not _is_view_only("git commit -am wip")
+
+
+def test_harness_permission_denials_are_not_triggers():
+    import json
+
+    def rec(kind, content):
+        return json.dumps({"type": kind, "message": {"content": content}})
+
+    lines = [
+        rec("user", "go"),
+        rec("assistant", [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "pytest"}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "b1", "content": "E   KeyError: 'total'"}]),
+        rec("assistant", [{"type": "tool_use", "id": "b2", "name": "Bash", "input": {"command": "pytest -q"}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "b2", "is_error": True,
+                      "content": "This command requires approval: python -m pytest -q"}]),
+        rec("assistant", [{"type": "tool_use", "id": "e1", "name": "Edit",
+                           "input": {"file_path": "a.py", "old_string": "x", "new_string": "y"}}]),
+    ]
+    assert parse("\n".join(lines))[0].trigger == "E   KeyError: 'total'"

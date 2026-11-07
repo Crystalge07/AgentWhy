@@ -82,3 +82,13 @@ def test_blame_hint_right_skips_bisect(tmp_path):
                          LocalSandbox(), Options(line=f"calc/config.py:{line}"), report, say=lambda *_: None)
     assert rc.step.id == 3 and report["blame_hint"]["is_cause"]
     assert "pruning" not in report and report["runs_total"] == 3
+
+
+def test_decide_counts_any_target_failure():
+    from whyagent.pipeline import decide
+    from whyagent.types import OTHER
+
+    assert decide([PASS, PASS, TARGET_FAIL, PASS, PASS]) == TARGET_FAIL  # a 20%-flaky failure still counts
+    assert decide([PASS] * 5) == PASS
+    assert decide([PASS, OTHER, PASS]) == OTHER
+    assert decide([OTHER, TARGET_FAIL]) == TARGET_FAIL

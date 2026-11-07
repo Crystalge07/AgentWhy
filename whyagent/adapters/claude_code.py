@@ -12,6 +12,9 @@ EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 # aren't triggers (any tool's error result still is).
 TRIGGER_TOOLS = {"Bash", "PowerShell", "BashOutput"}
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+# The agent harness refusing a tool call is about permissions, not the code: never a trigger.
+_HARNESS_DENIAL = re.compile(r"requires approval|requested permissions|permission to use|was blocked|"
+                             r"user (doesn't|does not) want|tool use was rejected", re.I)
 # Shell commands that only look at things. Their output is a file read, not something to react to.
 _VIEWERS = {"cat", "head", "tail", "less", "more", "grep", "rg", "ls", "dir", "find", "tree", "wc", "od", "file",
             "stat", "pwd", "cd", "echo", "printf", "type", "which", "where", "Get-Content", "Get-ChildItem",
@@ -103,7 +106,9 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                     if not (isinstance(c, dict) and c.get("type") == "tool_result"):
                         continue
                     if tool_names.get(c.get("tool_use_id"), "") in TRIGGER_TOOLS or c.get("is_error"):
-                        trigger = _text_of(c.get("content")) or trigger
+                        text = _text_of(c.get("content"))
+                        if text and not _HARNESS_DENIAL.search(text):
+                            trigger = text
             else:
                 prompt = _prompt_text(content) or prompt
                 reasoning, trigger = None, None

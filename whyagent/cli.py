@@ -53,8 +53,9 @@ def cmd_analyze(args) -> int:
         return res
 
     def outcome(rp, stage, state, n):
-        res = [r.outcome for r in run(rp, stage, state, n)]
-        return max(set(res), key=res.count)
+        from .pipeline import decide
+
+        return decide([r.outcome for r in run(rp, stage, state, n)])
 
     # Stage 0 — precheck (tests pinned from HEAD)
     try:
@@ -85,7 +86,7 @@ def cmd_analyze(args) -> int:
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
     rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox)
-    n = 3 if mode == "flaky" else 1
+    n = 5 if mode == "flaky" else 1  # flaky: any target failure in 5 runs counts (pipeline.decide)
     guilty = blamed = None
     if args.line:
         path, ln = args.line.rsplit(":", 1)

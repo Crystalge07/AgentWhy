@@ -22,7 +22,7 @@ from .types import OTHER, PASS, TARGET_FAIL, RootCause, State, Step
 @dataclass
 class Options:
     line: str | None = None  # "path:line" at HEAD, the blame hint
-    n: int = 1               # runs per state; 3 in flaky mode (majority decides)
+    n: int = 1               # runs per state; more in flaky mode (see decide())
     prune: bool = True
     scan: bool = False
     workers: int = 1         # >1 only pays off with B's parallel worker pool
@@ -43,6 +43,18 @@ def trigger_line(trigger: str | None) -> str:
         if hits:
             return hits[-1][:160]
     return (lines[-1] if lines else "")[:160]
+
+
+def decide(outcomes: list[str]) -> str:
+    """One verdict from n runs of the same state.
+
+    Any TARGET_FAIL means the bug is present: a failure is evidence, while passes never prove a
+    flaky bug is absent. (A majority vote misses a test that fails 30% of the time almost always.)
+    PASS needs every run to pass; anything else is OTHER.
+    """
+    if TARGET_FAIL in outcomes:
+        return TARGET_FAIL
+    return PASS if outcomes and all(o == PASS for o in outcomes) else OTHER
 
 
 def _show(repo: str, rev: str, path: str) -> str | None:
@@ -86,7 +98,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                 if r.outcome == TARGET_FAIL and not failing_output[0]:
                     failing_output[0] = r.output
             outs = [r.outcome for r in res]
-            return max(set(outs), key=outs.count)
+            return decide(outs)
         return go
 
     # Stage 2: the session as replayable edits + dependency map
