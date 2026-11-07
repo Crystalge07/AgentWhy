@@ -94,3 +94,42 @@ def test_blame_hint_not_the_cause():
     assert not r["is_cause"] and r["outcome"] == TARGET_FAIL
     assert r["reverted"] == [8, 9]    # dependents are reverted with it
     assert len(calls) == 1
+
+
+from whyagent.bisect import prefix_bisect_parallel, scan, sequential
+
+
+def test_parallel_bisect_two_rounds_for_15_edits_with_4_workers():
+    order = list(range(1, 16))
+    for cause in order:
+        batches = []
+
+        def run_many(prefixes, cause=cause):
+            batches.append(len(prefixes))
+            return [TARGET_FAIL if cause in p else PASS for p in prefixes]
+
+        k, rounds = prefix_bisect_parallel(order, run_many, workers=4)
+        assert order[k - 1] == cause
+        assert rounds <= 2 and max(batches) <= 4
+
+
+def test_parallel_bisect_skips_other_and_reports_inconclusive():
+    order = list(range(1, 9))
+    run = lambda ids: OTHER if len(ids) == 3 else (TARGET_FAIL if 5 in ids else PASS)  # not at the boundary
+    assert prefix_bisect_parallel(order, sequential(run), workers=2)[0] == 5
+    run2 = lambda ids: OTHER if len(ids) == 4 else (TARGET_FAIL if 5 in ids else PASS)
+    assert prefix_bisect_parallel(order, sequential(run2), workers=2)[0] is None
+
+
+def test_parallel_bisect_one_worker_matches_sequential():
+    order = list(range(1, 16))
+    run = lambda ids: TARGET_FAIL if 11 in ids else PASS
+    assert prefix_bisect_parallel(order, sequential(run), workers=1)[0] == prefix_bisect(order, run)
+
+
+def test_scan_finds_every_boundary_when_the_test_flips():
+    order = list(range(1, 9))
+    # fails after edit 2, fixed by edit 4, broken again by edit 6 (OTHER at 7 is ignored)
+    out = {1: PASS, 2: TARGET_FAIL, 3: TARGET_FAIL, 4: PASS, 5: PASS, 6: TARGET_FAIL, 7: OTHER, 8: TARGET_FAIL}
+    r = scan(order, sequential(lambda ids: out[len(ids)]))
+    assert r["boundaries"] == [2, 6] and r["first"] == 2 and r["flips"]
