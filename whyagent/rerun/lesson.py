@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Callable
 
 from ..types import RootCause, Step
@@ -66,9 +67,16 @@ def gemini_generate(prompt: str, model: str | None = None) -> str:
     # reads GEMINI_API_KEY. Pin v1beta: with newer (AQ.) keys the SDK defaults to v1, where the
     # "-latest" model aliases don't exist (404 NOT_FOUND).
     client = genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
-    resp = client.models.generate_content(model=model or os.environ.get("WHYAGENT_LESSON_MODEL", DEFAULT_MODEL),
-                                          contents=prompt)
-    return resp.text or ""
+    model = model or os.environ.get("WHYAGENT_LESSON_MODEL", DEFAULT_MODEL)
+    for attempt in range(4):  # 5xx (overloaded) is usually gone in seconds; 4xx (quota, auth) isn't
+        try:
+            return client.models.generate_content(model=model, contents=prompt).text or ""
+        except Exception as e:  # noqa: BLE001
+            code = getattr(e, "code", None)
+            if not (isinstance(code, int) and code >= 500) or attempt == 3:
+                raise
+            time.sleep(2 * 2 ** attempt)
+    return ""
 
 
 def make_lesson(rc: RootCause | Step, generate: Callable[[str], str] = gemini_generate) -> str:
