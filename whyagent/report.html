@@ -114,7 +114,7 @@ header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
 .pip { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
 .pip.PASS { background: var(--pass); color: #fff; }
 .pip.FAIL, .pip.TARGET_FAIL { background: var(--fail-bg); color: var(--fail); border: 1px solid var(--fail); }
-.pip.TAMPERED { background: var(--fail-bg); color: var(--fail); border: 1px dashed var(--fail); }
+.pip.TAMPERED, .pip.REGRESSED { background: var(--fail-bg); color: var(--fail); border: 1px dashed var(--fail); }
 .pip.OTHER { background: var(--other-bg); color: var(--other); }
 .stat { font-family: var(--mono); font-weight: 700; }
 .verdict-row { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
@@ -213,8 +213,9 @@ S(4, "pruning", pr ? (pr.verified ? "done" : "warn") : "todo", pr ? (pr.verified
 S(5, "bisect", bi ? "done" : "todo", bi ? `${steps.length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
 S(6, "confirm", cf ? (cf.outcome === "PASS" ? "done" : "warn") : "todo", cf ? (cf.outcome === "PASS" ? `revert #${cf.step_id} from final → test passes ✓ root cause${cf.collateral && cf.collateral.length ? ` (collateral ${cf.collateral.map(i => "#" + i).join(", ")})` : ""}` : `revert #${cf.step_id} still fails → ddmin ${cf.ddmin ? "→ {" + cf.ddmin.join(", ") + "}" : "inconclusive"}`) : "");
 S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : "written by " + esc(ls.source || "Gemini")}` : "");
-S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${rr.a.length} · with lesson ${count(rr.b)}/${rr.b.length} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");
+S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${valid(rr.a)} · with lesson ${count(rr.b)}/${valid(rr.b)} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");
 function count(a) { return a.filter(x => x === "PASS").length; }
+function valid(a) { return a.filter(x => x !== "OTHER").length; }
 function fmtP(p) { return p == null ? "?" : p < 0.001 ? p.toExponential(1) : p.toFixed(3); }
 html += `<h2>Pipeline</h2><div class="panel"><ul class="pipeline">${st.map(s => `<li class="${s.state}"><span class="dot ${s.state}"></span><span class="stage">${s.n} ${s.name}</span><span class="msg">${s.msg || "not reached"}</span></li>`).join("")}</ul></div>`;
 
@@ -247,19 +248,21 @@ if (steps.length) {
 
 // Lesson + reruns
 if (ls || rr) {
-  const vc = {VALIDATED: "PASS", PROMISING: "OTHER", NOT_NEEDED: "INFO", INEFFECTIVE: "TARGET_FAIL"};
-  const pips = a => a.map(o => `<span class="pip ${esc(o)}" title="${esc(o)}">${o === "PASS" ? "✓" : o === "TAMPERED" ? "T" : o === "OTHER" ? "?" : "✗"}</span>`).join("");
+  const vc = {VALIDATED: "PASS", PROMISING: "OTHER", NOT_NEEDED: "INFO", INEFFECTIVE: "TARGET_FAIL", INCONCLUSIVE: "OTHER"};
+  const pips = a => a.map(o => `<span class="pip ${esc(o)}" title="${esc(o)}">${o === "PASS" ? "✓" : o === "TAMPERED" ? "T" : o === "REGRESSED" ? "R" : o === "OTHER" ? "?" : "✗"}</span>`).join("");
   html += `<h2>Lesson</h2><div class="panel">
     ${ls ? `<div class="label">${ls.source === "brain" ? "From Entire Brain" : "Proposed lesson"}</div><div class="lesson">“${esc(ls.text)}”</div>` : ""}
     ${rr ? `<div class="label">Counterfactual reruns from the code right before the guilty edit · agent: ${esc(rr.agent || "?")}</div>
     <div class="arms">
-      <div class="arm"><span>Without lesson</span><div class="pips">${pips(rr.a)}</div><span class="stat">${count(rr.a)}/${rr.a.length} pass</span></div>
-      <div class="arm"><span>With lesson</span><div class="pips">${pips(rr.b)}</div><span class="stat">${count(rr.b)}/${rr.b.length} pass</span></div>
+      <div class="arm"><span>Without lesson</span><div class="pips">${pips(rr.a)}</div><span class="stat">${count(rr.a)}/${valid(rr.a)} pass</span></div>
+      <div class="arm"><span>With lesson</span><div class="pips">${pips(rr.b)}</div><span class="stat">${count(rr.b)}/${valid(rr.b)} pass</span></div>
     </div>
     <div class="verdict-row"><span class="chip ${vc[rr.verdict] || "INFO"}">${esc(rr.verdict)}</span>
-      <span class="mono">one-sided Fisher p = ${fmtP(rr.p)}</span>
+      ${rr.p != null ? `<span class="mono">one-sided Fisher p = ${fmtP(rr.p)}</span>` : ""}
+      ${rr.a.concat(rr.b).includes("OTHER") ? `<span class="muted">? = agent didn't really run (API error, quota), not counted</span>` : ""}
       ${rr.saved_to_brain ? `<span class="muted">saved to Entire Brain</span>` : `<span class="muted">not saved</span>`}
-      ${rr.a.includes("TAMPERED") || rr.b.includes("TAMPERED") ? `<span class="muted">T = edited the tests, counted as a failure</span>` : ""}</div>
+      ${rr.a.concat(rr.b).some(o => o === "TAMPERED" || o === "REGRESSED") ? `<span class="muted">T = edited the tests, R = broke another test; both count as failures</span>` : ""}
+      ${rr.tokens ? `<span class="muted">${rr.tokens.toLocaleString()} tokens</span>` : ""}</div>
     <div class="muted" style="font-size:13px;margin-top:8px">Both arms use the same rerun agent, so this shows the lesson helps ${esc(rr.agent || "that agent")}. Reruns start from a summary of earlier edits, not the original agent's memory.</div>` : ""}
   </div>`;
 }

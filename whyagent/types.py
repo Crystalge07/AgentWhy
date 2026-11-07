@@ -43,3 +43,20 @@ class RunResult:
     exit_code: int
     duration_ms: int
     tokens: int | None = None
+
+
+@dataclass
+class RootCause:
+    """A -> B: the proven guilty edit, and everything the reruns need."""
+    step: Step                      # guilty edit (reasoning, trigger, prompt, diff)
+    collateral: list[int]           # dependents reverted alongside it
+    before_state: State             # P(k-1): rerun start state
+    edits_before: list[Step]        # for the "summary of edits 1..k-1" prompt
+    failing_output: str
+    head_state: State               # for "everything that passed at G still passes"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RootCause":
+        return cls(step=Step(**d["step"]), collateral=list(d.get("collateral", [])),
+                   before_state=State(**d["before_state"]), edits_before=[Step(**s) for s in d["edits_before"]],
+                   failing_output=d.get("failing_output", ""), head_state=State(**d["head_state"]))

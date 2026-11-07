@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import entire
 from .report import Report, state_label
-from .types import PASS, TARGET_FAIL, State
+from .types import PASS, TARGET_FAIL, RootCause, State
 
 
 def _git(*a) -> str:
@@ -40,14 +40,123 @@ def cmd_render(args) -> int:
     return _finish(report, args, 0)
 
 
+def _make_sandbox(args, head: str):
+    from .replay import DockerSandbox, LocalSandbox, SandboxError
+
+    try:
+        sandbox = DockerSandbox(".", head, setup=args.setup) if args.sandbox == "docker" else LocalSandbox()
+        sandbox.prepare()
+    except SandboxError as e:
+        print(f"sandbox: {e}")
+        return None
+    print(f"sandbox: {sandbox.name}" + (f" ({sandbox.image}, network off)" if args.sandbox == "docker" else " (no isolation)"))
+    return sandbox
+
+
+def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
+    """Stage 7 (lesson) and Stage 8 (counterfactual reruns). rp must know rc's steps."""
+    from .rerun import Reruns, agent_by_name, decide, make_lesson
+
+    # Stage 7 — Brain first, then Gemini
+    lesson, source = None, "gemini"
+    lookup = getattr(entire, "brain_lookup", None)  # A provides; absent until the Brain wrapper lands
+    if lookup is not None:
+        try:
+            error = ((rc.step.trigger or "").strip().splitlines() or [""])[-1]
+            lesson = lookup([rc.step.file], error)
+            source = "brain" if lesson else source
+        except Exception as e:
+            print(f"lesson: Brain lookup failed ({e}), writing a new one")
+    if not lesson:
+        try:
+            lesson = make_lesson(rc)
+        except Exception as e:
+            msg = str(e).split(". {")[0][:200]
+            print(f"lesson: Gemini failed ({type(e).__name__}: {msg})")
+            report.note(f"Lesson generation failed: {msg}")
+            return 1
+    hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
+    print(f'lesson: "{lesson}"' + (" (from Brain)" if source == "brain" else "") + hidden)
+    report["lesson"] = {"text": lesson, "source": source}
+    if args.no_rerun:
+        return 0
+
+    # Stage 8 — same agent both arms, N runs each
+    if args.sandbox != "docker":
+        report.note("Reruns ran without Docker: the agent had full access to the host.")
+    agent = agent_by_name(args.rerun_agent)
+    print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time…")
+    rr = Reruns(rp, agent, workers=args.workers, runlog=runlog)
+    a_all, b_all = rr.run(rc, lesson, args.runs)
+    for r in a_all + b_all:
+        if r.outcome != "PASS":
+            report.note(f"Rerun arm {r.arm}: {r.outcome.lower()}, {r.detail}")
+    # OTHER (agent never really ran: quota, auth, crash) is never evidence
+    a = [r for r in a_all if r.outcome != "OTHER"]
+    b = [r for r in b_all if r.outcome != "OTHER"]
+    if not a or not b:
+        why = next(r.detail for r in a_all + b_all if r.outcome == "OTHER")
+        print(f"rerun: INCONCLUSIVE, no valid runs in {'both arms' if not a and not b else 'one arm'} ({why})")
+        report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
+                           "p": None, "verdict": "INCONCLUSIVE", "saved_to_brain": False}
+        return 1
+    ap, bp = sum(r.outcome == "PASS" for r in a), sum(r.outcome == "PASS" for r in b)
+    verdict, p = decide(ap, len(a), bp, len(b))
+    dropped = len(a_all) + len(b_all) - len(a) - len(b)
+    saved = False
+    if verdict == "VALIDATED" and source != "brain":
+        save = getattr(entire, "brain_save", None)
+        if save is not None:
+            try:
+                save(lesson)
+                saved = True
+            except Exception as e:
+                print(f"rerun: Brain save failed ({e})")
+    print(f"rerun: without lesson {ap}/{len(a)} pass · with lesson {bp}/{len(b)} pass · p = {p:.3f} → {verdict}"
+          + (", saved to Brain" if saved else "") + (f" ({dropped} runs dropped as OTHER)" if dropped else ""))
+    report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
+                       "p": p, "verdict": verdict, "saved_to_brain": saved,
+                       "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
+    return 0
+
+
+def cmd_root_cause(args) -> int:
+    """Dev entry for B: run stages 7-8 from a hard-coded RootCause JSON (the H16 gate)."""
+    from .replay import Replayer
+    from .tiger import RunLog
+
+    fx = json.loads(Path(args.root_cause).read_text())
+    rc = RootCause.from_dict(fx["root_cause"])
+    test = args.test or fx["test"]
+    head = rc.head_state.base_commit
+    report = Report(repo=Path.cwd().name, test=test, good=fx.get("good"), head=head, line=fx.get("line"))
+    report.note(f"Stages 7–8 only, from the hard-coded root cause in {args.root_cause}.")
+    report["root_cause"] = {"step_id": rc.step.id, "failing_output": rc.failing_output}
+    report["session"] = {"id": rc.step.session_id, "agent": rc.step.agent, "prompt": rc.step.prompt,
+                         "steps": [vars(s) for s in rc.edits_before + [rc.step]]}
+    sandbox = _make_sandbox(args, head)
+    if sandbox is None:
+        return 2
+    runlog = RunLog()
+    rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog)
+    try:
+        code = stages_7_8(rc, rp, args, report, runlog)
+    finally:
+        runlog.close()
+    return _finish(report, args, code)
+
+
 def cmd_analyze(args) -> int:
-    from .replay import DockerSandbox, LocalSandbox, Replayer, SandboxError
+    from .replay import Replayer
+    from .tiger import RunLog
 
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line)
+    runlog = RunLog()
 
     def run(rp, stage, state, n):
+        rp.stage = stage
         res = rp.run(state, n)
         report.log_runs(stage, state_label(state), res)
         return res
@@ -57,14 +166,10 @@ def cmd_analyze(args) -> int:
         return max(set(res), key=res.count)
 
     # Stage 0 — precheck (tests pinned from HEAD)
-    try:
-        sandbox = DockerSandbox(".", head, setup=args.setup) if args.sandbox == "docker" else LocalSandbox()
-        sandbox.prepare()
-    except SandboxError as e:
-        print(f"sandbox: {e}")
+    sandbox = _make_sandbox(args, head)
+    if sandbox is None:
         return 2
-    print(f"sandbox: {sandbox.name}" + (f" ({sandbox.image}, network off)" if args.sandbox == "docker" else " (no isolation)"))
-    rp = Replayer(".", [], args.test, sandbox=sandbox)
+    rp = Replayer(".", [], args.test, sandbox=sandbox, runlog=runlog)
     head_res = run(rp, "precheck", State(head, [], head), 3)
     good_res = run(rp, "precheck", State(good, [], head), 3)
     g_pass = sum(r.outcome == PASS for r in good_res)
@@ -84,7 +189,7 @@ def cmd_analyze(args) -> int:
     report["precheck"]["signature"] = target_sig
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
-    rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox)
+    rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog)
     n = 3 if mode == "flaky" else 1
     guilty = blamed = None
     if args.line:
@@ -142,11 +247,16 @@ def main(argv=None) -> int:
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
+    p.add_argument("--rerun-agent", default="gemini-cli", help="agent for counterfactual reruns (default gemini-cli)")
+    p.add_argument("--workers", type=int, default=2, help="reruns in parallel (default 2)")
+    p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)
     if args.check_entire:
         return cmd_check_entire(args)
     if args.render:
         return cmd_render(args)
+    if args.root_cause:
+        return cmd_root_cause(args)
     if not (args.test and args.good):
         p.error("--test and --good are required (or use --check-entire)")
     return cmd_analyze(args)

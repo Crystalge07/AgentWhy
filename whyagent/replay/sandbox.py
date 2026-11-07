@@ -38,11 +38,16 @@ class LocalSandbox:
     def prepare(self):
         pass
 
-    def exec(self, workdir: str, cmd: str, timeout: int) -> Exec:
+    def exec(self, workdir: str, cmd: str, timeout: int, env: dict | None = None, **_ignored) -> Exec:
+        home = tempfile.mkdtemp(prefix="whyagent-home-") if env else None
+        full_env = {**os.environ, **({"HOME": home} if home else {}), **(env or {})}
         try:
-            p = subprocess.run(cmd, shell=True, cwd=workdir, capture_output=True, timeout=timeout, **_ENC)
+            p = subprocess.run(cmd, shell=True, cwd=workdir, capture_output=True, timeout=timeout, env=full_env, **_ENC)
         except subprocess.TimeoutExpired:
             return Exec(-1, "", timed_out=True)
+        finally:
+            if home:
+                shutil.rmtree(home, ignore_errors=True)
         return Exec(p.returncode, p.stdout + p.stderr)
 
 
@@ -122,20 +127,45 @@ class DockerSandbox:
             shutil.rmtree(ctx, ignore_errors=True)
         self.image = tag
 
-    def exec(self, workdir: str, cmd: str, timeout: int) -> Exec:
+    def extend(self, label: str, dockerfile_lines: list[str]) -> str:
+        """Build (once) an image FROM the HEAD test image with extra lines, e.g. an agent CLI. Returns its tag."""
+        if self.image is None:
+            self.prepare()
+        body = "\n".join(dockerfile_lines)
+        tag = f"{self.image}-{label}-{hashlib.sha1(body.encode()).hexdigest()[:8]}"
+        if subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0:
+            return tag
+        if not self.quiet:
+            print(f"sandbox: building image {tag}…", file=sys.stderr)
+        p = subprocess.run(["docker", "build", "-t", tag, "-"], input=f"FROM {self.image}\n{body}\n",
+                           capture_output=True, **_ENC)
+        if p.returncode != 0:
+            tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-25:])
+            raise SandboxError(f"docker build ({label}) failed:\n{tail}")
+        return tag
+
+    def exec(self, workdir: str, cmd: str, timeout: int, env: dict | None = None, network: str | None = None,
+             image: str | None = None, readonly: tuple[str, ...] = ()) -> Exec:
+        """Run cmd in a fresh container with workdir at /work. `env` values are passed by name, never on argv,
+        so API keys don't show up in `ps`. `readonly` paths (relative to workdir) are mounted read-only."""
         if self.image is None:
             self.prepare()
         name = f"whyagent-run-{uuid.uuid4().hex[:12]}"
-        args = ["docker", "run", "--rm", "--name", name, "--network", self.network, "--memory", self.memory,
-                "-v", f"{os.path.abspath(workdir)}:/work", "-w", "/work",
+        wd = os.path.abspath(workdir)
+        args = ["docker", "run", "--rm", "--name", name, "--network", network or self.network, "--memory", self.memory,
+                "-v", f"{wd}:/work", "-w", "/work",
                 "-e", "HOME=/tmp", "-e", "PYTHONDONTWRITEBYTECODE=1",
                 "-e", "PYTEST_ADDOPTS=-p no:cacheprovider"]
+        for rel in readonly:
+            args += ["-v", f"{os.path.join(wd, rel)}:/work/{rel.replace(os.sep, '/')}:ro"]
+        for k in (env or {}):
+            args += ["-e", k]
         if hasattr(os, "getuid"):
             # Files the test writes stay owned by us, so worktree teardown can delete them (matters on Linux/Vultr).
             args += ["--user", f"{os.getuid()}:{os.getgid()}"]
-        args += [self.image, "sh", "-c", cmd]
+        args += [image or self.image, "sh", "-c", cmd]
         try:
-            p = subprocess.run(args, capture_output=True, timeout=timeout, **_ENC)
+            p = subprocess.run(args, capture_output=True, timeout=timeout, env={**os.environ, **(env or {})}, **_ENC)
         except subprocess.TimeoutExpired:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             return Exec(-1, "", timed_out=True)

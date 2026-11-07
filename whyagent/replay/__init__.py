@@ -33,7 +33,7 @@ def _git(*args, cwd="."):
 
 class Replayer:
     def __init__(self, repo: str, steps: list[Step], test_cmd: str, target_sig: str | None = None,
-                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS, sandbox=None):
+                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS, sandbox=None, runlog=None):
         self.repo = os.path.abspath(repo)
         self.steps = {s.id: s for s in steps}
         self.test_cmd = test_cmd
@@ -43,6 +43,8 @@ class Replayer:
         self.cache: dict[str, list[RunResult]] = {}
         self.runs = 0
         self.sandbox = sandbox or LocalSandbox()
+        self.runlog = runlog  # tiger.RunLog or None
+        self.stage = "run"  # set by the caller; tags Tiger rows
         self.sandbox.prepare()
 
     def build(self, state: State) -> str:
@@ -92,14 +94,22 @@ class Replayer:
     def run(self, state: State, n: int = 1) -> list[RunResult]:
         k = state.key()
         if k in self.cache and len(self.cache[k]) >= n:
-            return self.cache[k][:n]
+            res = self.cache[k][:n]
+            self._log(k, res, cached=True)
+            return res
         d = self.build(state)
         try:
             res = [self._once(d) for _ in range(n)]
         finally:
             self.teardown(d)
         self.cache[k] = res
+        self._log(k, res)
         return res
+
+    def _log(self, key: str, res: list[RunResult], cached: bool = False):
+        if self.runlog is not None:
+            for r in res:
+                self.runlog.log(self.stage, key, r.outcome, 0 if cached else r.duration_ms, r.tokens, cached=cached)
 
     def outcome(self, state: State, n: int = 1) -> str:
         """Majority outcome across n runs."""
