@@ -111,3 +111,43 @@ def test_claude_code_agent(monkeypatch):
     assert "Invalid API key" in c.error(auth, 1)
     capped = '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":15}'
     assert c.error(capped, 1) is None
+
+
+def _online():
+    import socket
+    try:
+        socket.create_connection(("example.com", 443), timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not docker_ok, reason=docker_why)
+@pytest.mark.skipif(not _online(), reason="needs internet")
+def test_egress_allowlist(tmp_path):
+    from whyagent.replay.egress import Egress
+    base = _repo_simple(tmp_path)
+    sb = DockerSandbox(str(tmp_path), base, setup="true", quiet=True)
+    sb.prepare()
+    fetch = ("python -c \"import sys, urllib.request as u\n"
+             "try: u.urlopen('https://' + sys.argv[1], timeout=8); print('OPEN')\n"
+             "except Exception as e: print('BLOCKED', type(e).__name__)\" ")
+    with Egress(sb.image, ["example.com"]) as eg:
+        run = lambda host, env: sb.exec(str(tmp_path), fetch + host, 30, env=env, network=eg.network).output  # noqa: E731
+        assert "OPEN" in run("example.com", eg.env)
+        assert "BLOCKED" in run("www.google.com", eg.env)
+        assert "BLOCKED" in run("example.com", {"X": "1"})  # bypassing the proxy: internal network, no route out
+    assert eg.blocked == ["www.google.com:443"]
+    nets = subprocess.run(["docker", "network", "ls", "-q", "--filter", f"name={eg.network}"],
+                          capture_output=True, encoding="utf-8").stdout.strip()
+    assert nets == ""
+
+
+def _repo_simple(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    return git(tmp_path, "rev-parse", "HEAD")

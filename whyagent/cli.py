@@ -107,6 +107,9 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time…")
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog)
     a_all, b_all = rr.run(rc, lesson, args.runs)
+    if rr.blocked:
+        print(f"rerun: blocked agent network access to {', '.join(rr.blocked)}")
+        report.note(f"Reruns: the agent tried to reach {', '.join(rr.blocked)}; blocked (only the model API is allowed).")
     for r in a_all + b_all:
         if r.outcome != "PASS":
             report.note(f"Rerun arm {r.arm}: {r.outcome.lower()}, {r.detail}")

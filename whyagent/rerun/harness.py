@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..replay import Replayer, is_test_file
+from ..replay.egress import Egress
 from ..types import RootCause
 
 PASS, FAIL, TAMPERED, REGRESSED, OTHER = "PASS", "FAIL", "TAMPERED", "REGRESSED", "OTHER"
@@ -35,6 +36,7 @@ class Agent:
     image_lines: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     network: str = "bridge"
+    allow: list[str] = field(default_factory=list)  # in Docker: only these hosts are reachable (via Egress)
 
     def tokens(self, output: str) -> int | None:
         return None
@@ -67,7 +69,8 @@ _NODE_LINES = [
 
 class GeminiCLI(Agent):
     def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "0.67.0"):
-        settings = json.dumps({"model": {"maxSessionTurns": max_turns}})
+        settings = json.dumps({"model": {"maxSessionTurns": max_turns},
+                               "privacy": {"usageStatisticsEnabled": False}})
         model = model or os.environ.get("WHYAGENT_RERUN_MODEL")
         super().__init__(
             name="gemini-cli",
@@ -77,6 +80,7 @@ class GeminiCLI(Agent):
                 _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @google/gemini-cli@{version}"],
             env={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""), "GEMINI_CLI_TRUST_WORKSPACE": "true",
                  "WHYAGENT_GEMINI_SETTINGS": settings},
+            allow=["generativelanguage.googleapis.com"],
         )
 
     def error(self, output: str, exit_code: int) -> str | None:
@@ -112,6 +116,7 @@ class ClaudeCode(Agent):
                 _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@{version}"],
             env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""), "DISABLE_AUTOUPDATER": "1",
                  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+            allow=["api.anthropic.com"],
         )
 
     def error(self, output: str, exit_code: int) -> str | None:
@@ -180,6 +185,8 @@ class Reruns:
         self._baseline: set[str] | None = None
         self._prepared = False
         self._abort: str | None = None
+        self._egress: Egress | None = None
+        self.blocked: list[str] = []  # hosts the agent tried to reach outside its allowlist
 
     def prepare(self, rc: RootCause):
         self._prepared = True
@@ -205,7 +212,11 @@ class Reruns:
             before = _test_hashes(d, self.rp.test_globs)
             ro = tuple(sorted({rel.split("/")[0] for rel in before if "/" in rel and (Path(d) / rel.split("/")[0]).is_dir()}))
             env = {**self.agent.env, "WHYAGENT_PROMPT": task_prompt(rc, lesson)}
-            ex = sb.exec(d, self.agent.command, self.agent_timeout, env=env, network=self.agent.network,
+            network = self.agent.network
+            if self._egress is not None:
+                env.update(self._egress.env)
+                network = self._egress.network
+            ex = sb.exec(d, self.agent.command, self.agent_timeout, env=env, network=network,
                          image=self.image, readonly=ro)
             tokens = self.agent.tokens(ex.output)
             ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
@@ -234,8 +245,18 @@ class Reruns:
         if not self._prepared:
             self.prepare(rc)
         jobs = [(None, "A"), (lesson, "B")] * n
-        with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-            results = list(pool.map(lambda j: self.one(rc, *j), jobs))
+        sb = self.rp.sandbox
+        use_egress = bool(self.agent.allow) and getattr(sb, "image", None) is not None
+        if use_egress:
+            self._egress = Egress(sb.image, self.agent.allow).__enter__()
+        try:
+            with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
+                results = list(pool.map(lambda j: self.one(rc, *j), jobs))
+        finally:
+            if self._egress is not None:
+                self._egress.__exit__(None, None, None)
+                self.blocked = self._egress.blocked
+                self._egress = None
         for r in results:
             if self.runlog is not None:
                 self.runlog.log("rerun", r.arm, r.outcome, r.duration_ms, r.tokens, arm=r.arm)
