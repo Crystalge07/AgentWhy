@@ -24,7 +24,7 @@ whyagent --test "pytest tests/test_auth.py::test_login" --good a1b2c3d --line sr
 | --- | --- | --- |
 | `whyagent/types.py` | shared | Step / State / RunResult (+ RootCause TODO) |
 | `whyagent/entire.py` | A | Entire CLI wrapper + connection check; Graph + Brain wrappers TODO |
-| `whyagent/adapters/` | A | Claude Code JSONL parser + Entire checkpoint load done; session merge, replay fidelity TODO |
+| `whyagent/adapters/` | A | Claude Code JSONL parser + Entire checkpoint load done, verified on a real recorded session; session merge, replay fidelity TODO |
 | `whyagent/bisect/` | A | deps, prefix bisect, confirm, ddmin done; Stage 3 hint, Graph pruning TODO |
 | `whyagent/replay/` | B | git-worktree build, pinned tests, signatures, cache (local); Docker, worker pool, Tiger logging TODO |
 | `whyagent/rerun/` | B | Fisher test + verdict done; Gemini lesson (Stage 7) + reruns TODO |

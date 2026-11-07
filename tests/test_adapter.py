@@ -12,3 +12,19 @@ def test_parse_claude_code_fixture():
     assert s.trigger == "SSLError: certificate verify failed"
     assert s.reasoning == "cert error, disabling verification to unblock"
     assert s.prompt.startswith("Fix the certificate")
+
+
+def test_parse_real_transcript_shape():
+    """Quirks seen in real Entire-recorded Claude Code sessions (verified 2026-11-07)."""
+    steps = parse((Path(__file__).parent / "fixtures/claude_session_real_shape.jsonl").read_text())
+    # the same tool_use id appears in two records; it must only be applied once
+    assert len(steps) == 2
+    # absolute paths become repo-relative (POSIX and Windows recordings), so replay works on any machine
+    assert [s.file for s in steps] == ["src/config.py", "src/client.py"]
+    s = steps[0]
+    # injected <system-reminder> blocks (e.g. CLAUDE.md) are not part of the user's prompt
+    assert s.prompt == "Fix the certificate error when calling the API"
+    # empty (hidden) thinking blocks don't wipe out visible reasoning
+    assert s.reasoning == "cert error, disabling verification to unblock"
+    assert s.trigger == "SSLError: certificate verify failed"
+    assert [s.id for s in steps] == [1, 2]
