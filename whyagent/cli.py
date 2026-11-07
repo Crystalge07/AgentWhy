@@ -13,6 +13,9 @@ from .report import Report, state_label
 from .types import PASS, TARGET_FAIL, RootCause, State
 
 
+PRECHECK_RUNS = 5
+
+
 def _git(*a) -> str:
     return subprocess.run(["git", *a], capture_output=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
@@ -147,8 +150,13 @@ def cmd_root_cause(args) -> int:
     from .tiger import RunLog
 
     fx = json.loads(Path(args.root_cause).read_text(encoding="utf-8"))
+    if "root_cause" not in fx:  # the bare root_cause.json a real analysis writes (needs --test)
+        fx = {"root_cause": fx}
     rc = RootCause.from_dict(fx["root_cause"])
-    test = args.test or fx["test"]
+    test = args.test or fx.get("test")
+    if not test:
+        print("--root-cause: this file has no test command, pass --test")
+        return 2
     head = rc.head_state.base_commit
     report = Report(repo=Path.cwd().name, test=test, good=fx.get("good"), head=head, line=fx.get("line"))
     report.note(f"Stages 7–8 only, from the hard-coded root cause in {args.root_cause}.")
@@ -168,7 +176,7 @@ def cmd_root_cause(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    from .replay import Replayer, vote
+    from .replay import Replayer, is_test_file, vote
     from .tiger import RunLog
 
     head = _git("rev-parse", "HEAD")
@@ -190,21 +198,26 @@ def cmd_analyze(args) -> int:
     if sandbox is None:
         return 2
     rp = Replayer(".", [], args.test, sandbox=sandbox, runlog=runlog, workers=args.workers)
-    head_res = run(rp, "precheck", State(head, [], head), 3)
-    good_res = run(rp, "precheck", State(good, [], head), 3)
+    # 5 runs each, HEAD and good in parallel. With 3, a test that fails 35% of the time looks
+    # stable about 4% of the time, and stable mode's single run per state then misreads it.
+    N = PRECHECK_RUNS
+    rp.stage = "precheck"
+    head_res, good_res = rp.run_many([State(head, [], head), State(good, [], head)], N)
+    report.log_runs("precheck", state_label(State(head, [], head)), head_res)
+    report.log_runs("precheck", state_label(State(good, [], head)), good_res)
     g_pass = sum(r.outcome == PASS for r in good_res)
     h_fail = sum(r.outcome != PASS for r in head_res)
-    mode = "stable" if h_fail == 3 else "flaky"
-    report["precheck"] = {"head_fail": h_fail, "good_pass": g_pass, "n": 3, "mode": mode}
-    if g_pass != 3:
-        print(f"precheck: good commit passes {g_pass}/3 → abort: the test fails without the agent's changes")
-        report.note("Aborted: the good commit doesn't pass 3/3, so the test fails without the agent's changes.")
+    mode = "stable" if h_fail == N else "flaky"
+    report["precheck"] = {"head_fail": h_fail, "good_pass": g_pass, "n": N, "mode": mode}
+    if g_pass != N:
+        print(f"precheck: good commit passes {g_pass}/{N} → abort: the test fails without the agent's changes")
+        report.note(f"Aborted: the good commit doesn't pass {N}/{N}, so the test fails without the agent's changes.")
         return _finish(report, args, 2)
     if h_fail == 0:
-        print("precheck: HEAD passes 3/3 → nothing to explain")
-        report.note("HEAD passes 3/3, nothing to explain.")
+        print(f"precheck: HEAD passes {N}/{N} → nothing to explain")
+        report.note(f"HEAD passes {N}/{N}, nothing to explain.")
         return _finish(report, args, 2)
-    print(f"precheck: HEAD fails {h_fail}/3, good commit passes 3/3 → {mode}")
+    print(f"precheck: HEAD fails {h_fail}/{N}, good commit passes {N}/{N} → {mode}")
     target_sig = next(r.signature for r in head_res if r.outcome != PASS)
     report["precheck"]["signature"] = target_sig
 
@@ -222,7 +235,17 @@ def cmd_analyze(args) -> int:
             guilty = c
             print(f"commit: blamed {c[:7]} ✓ confirmed (parent passes, commit fails)")
     if guilty is None:
-        commits = _git("rev-list", "--reverse", f"{good}..{head}").split()
+        # Tests are pinned to HEAD, so a commit that only touches test files runs exactly the same code
+        # as its parent and can never be guilty. Leave those out (else a flaky pass blames them).
+        def tests_only(c: str) -> bool:
+            files = _git("diff-tree", "--no-commit-id", "--name-only", "-r", c).split()  # empty for merges
+            return bool(files) and all(is_test_file(f) for f in files)
+
+        commits = [c for c in _git("rev-list", "--reverse", f"{good}..{head}").split() if not tests_only(c)]
+        if not commits:
+            print("commit: every commit since --good only touches tests → nothing to blame")
+            report.note("Every commit between --good and HEAD only changes test files, which are pinned to HEAD.")
+            return _finish(report, args, 2)
         lo, hi = -1, len(commits) - 1  # index -1 == good
         while hi - lo > 1:
             mid = (lo + hi) // 2

@@ -151,3 +151,41 @@ def _repo_simple(tmp_path):
     git(tmp_path, "add", "-A")
     git(tmp_path, "commit", "-qm", "base")
     return git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_gemini_retries_5xx_only(monkeypatch):
+    import types as T
+
+    from whyagent.rerun import lesson
+
+    calls = []
+
+    class Err(Exception):
+        def __init__(self, code):
+            self.code = code
+
+    def fake_client(**_):
+        def gen(model, contents):
+            calls.append(model)
+            if len(calls) < 3:
+                raise Err(503)
+            return T.SimpleNamespace(text="Ok.")
+        return T.SimpleNamespace(models=T.SimpleNamespace(generate_content=gen))
+
+    import google.genai as genai
+    monkeypatch.setattr(genai, "Client", fake_client)
+    monkeypatch.setattr(lesson.time, "sleep", lambda s: None)
+    assert lesson.gemini_generate("p", model="m") == "Ok." and len(calls) == 3
+
+    calls.clear()
+
+    def quota(**_):
+        def gen(model, contents):
+            calls.append(model)
+            raise Err(429)
+        return T.SimpleNamespace(models=T.SimpleNamespace(generate_content=gen))
+
+    monkeypatch.setattr(genai, "Client", quota)
+    with pytest.raises(Err):
+        lesson.gemini_generate("p", model="m")
+    assert len(calls) == 1
