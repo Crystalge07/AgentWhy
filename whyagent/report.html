@@ -171,9 +171,14 @@ html += `<header><div class="brand">whyagent <span>report</span></div>
 // Verdict
 const pAfter = bi && bi.probes && bi.probes.find(p => p.after_step === (rc && rc.step_id));
 const idx = cause ? steps.indexOf(cause) : -1;
-const prevKept = idx > 0 ? steps.slice(0, idx).filter(s => !(pr && (pr.pruned || []).includes(s.id))).pop() : null;
-// P(0) is the guilty commit's parent, which passes by construction (Stage 1)
-const pBefore = !cause ? null : !prevKept ? {outcome: "PASS"} : bi && bi.probes && bi.probes.find(p => p.after_step === prevKept.id);
+// the edit right before the cause *in the bisected order* (bi.kept skips pruned and test-file edits)
+const keptIds = bi && bi.kept ? bi.kept : null;
+const prevKept = !cause ? null : keptIds
+  ? (keptIds.indexOf(cause.id) > 0 ? byId[keptIds[keptIds.indexOf(cause.id) - 1]] : null)
+  : (idx > 0 ? steps.slice(0, idx).filter(s => !(pr && (pr.pruned || []).includes(s.id))).pop() : null);
+// P(0) is the guilty commit's parent; the pipeline tests it explicitly (after_step 0), else Stage 1 showed it passes
+const p0 = bi && bi.probes && bi.probes.find(p => p.after_step === 0);
+const pBefore = !cause ? null : !prevKept ? (p0 || {outcome: "PASS"}) : bi && bi.probes && bi.probes.find(p => p.after_step === prevKept.id);
 let headline, sub;
 if (cause) {
   headline = `Edit #${cause.id} in <code>${esc(loc(cause))}</code> broke <code>${esc(testName.split("::").pop())}</code>`;
@@ -207,10 +212,11 @@ const st = [];
 const S = (n, name, state, msg) => st.push({n, name, state, msg});
 S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}` : "");
 S(1, "commit", cm ? "done" : "todo", cm ? (cm.method === "blame" ? `blamed ${short(cm.sha)} ✓ confirmed (parent passes, commit fails)` : `${cm.blamed ? `blame hint ${short(cm.blamed)} wrong, ` : ""}bisected → ${short(cm.sha)}`) + (cm.checkpoint ? ` · checkpoint ${cm.checkpoint}` : "") + (cm.human ? " · no checkpoint, human-written" : "") : "");
-S(2, "session", ses ? (ses.replay_matches === false || ses.unattributed ? "warn" : "done") : "todo", ses ? `${esc(ses.id)} · ${steps.length} edits · replay ${ses.replay_matches ? "matches commit ✓" : "differs, leftover diff kept as an unattributed edit"}` : "");
+const shellN = (ses && ses.shell_ids || []).length, unattrN = (ses && ses.unattributed_ids || []).length;
+S(2, "session", ses ? (unattrN || (ses.replay_matches === false && !shellN) ? "warn" : "done") : "todo", ses ? `${esc(ses.id)} · ${steps.length} edits · replay ${ses.replay_matches ? "matches commit ✓" : `matches commit ✓ with ${[shellN ? `${shellN} edit${shellN > 1 ? "s" : ""} made by the agent's shell commands` : "", unattrN ? `${unattrN} unattributed edit${unattrN > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ") || "a leftover diff kept as an unattributed edit"}`}` : "");
 S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : "");
 S(4, "pruning", pr ? (pr.verified ? "done" : "warn") : "todo", pr ? (pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
-S(5, "bisect", bi ? "done" : "todo", bi ? `${steps.length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
+S(5, "bisect", bi ? "done" : "todo", bi && bi.via === "blame_hint" ? `skipped: the blame hint already tested the boundary at edit #${bi.boundary} (${bi.probes.length} runs)` : bi ? `${bi.edits != null ? bi.edits : steps.length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
 S(6, "confirm", cf ? (cf.outcome === "PASS" ? "done" : "warn") : "todo", cf ? (cf.outcome === "PASS" ? `revert #${cf.step_id} from final → test passes ✓ root cause${cf.collateral && cf.collateral.length ? ` (collateral ${cf.collateral.map(i => "#" + i).join(", ")})` : ""}` : `revert #${cf.step_id} still fails → ddmin ${cf.ddmin ? "→ {" + cf.ddmin.join(", ") + "}" : "inconclusive"}`) : "");
 S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : "written by " + esc(ls.source || "Gemini")}` : "");
 S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${valid(rr.a)} · with lesson ${count(rr.b)}/${valid(rr.b)} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");
@@ -291,8 +297,9 @@ app.innerHTML = html;
 // Edit detail
 function diffLines(a, b) {
   const out = [];
-  (a ? a.split("\n") : []).forEach(l => out.push(`<div class="del">- ${esc(l)}</div>`));
-  (b ? b.split("\n") : []).forEach(l => out.push(`<div class="add">+ ${esc(l)}</div>`));
+  const lines = t => t ? t.replace(/\n$/, "").split("\n") : [];  // no phantom line from a trailing newline
+  lines(a).forEach(l => out.push(`<div class="del">- ${esc(l)}</div>`));
+  lines(b).forEach(l => out.push(`<div class="add">+ ${esc(l)}</div>`));
   return out.join("");
 }
 function show(id) {
@@ -309,6 +316,7 @@ function show(id) {
     ${s.reasoning || s.trigger ? `<div class="two">
       <div><div class="label">What the agent was reacting to</div>${s.trigger ? `<pre class="trigger">${esc(s.trigger)}</pre>` : `<div class="muted">No tool output right before this edit.</div>`}</div>
       <div><div class="label">Agent's reasoning</div>${s.reasoning ? `<div class="quote">${esc(s.reasoning)}</div>` : `<div class="muted">Not recorded (hidden thinking).</div>`}</div></div>` : `<div class="muted">No reasoning or trigger recorded for this edit.</div>`}
+    ${s.command ? `<div><div class="label">Shell command that made this change</div><pre class="trigger">${esc(s.command)}</pre></div>` : ""}
     <div><div class="label">Diff</div><div class="diff">${diffLines(s.old_text, s.new_text)}</div></div>
     ${rc && s.id === rc.step_id && rc.failing_output ? `<div><div class="label">Failing test output at HEAD</div><pre class="trigger">${esc(rc.failing_output)}</pre></div>` : ""}`;
 }

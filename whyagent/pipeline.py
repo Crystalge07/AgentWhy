@@ -195,12 +195,19 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                             f"{', '.join('#' + str(kept[b - 1]) for b in res['boundaries'])}. Using the first.")
         else:
             k, _rounds = prefix_bisect_parallel(kept, probe_many, workers=opts.workers)
-        report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan}
+        report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan,
+                            "edits": len(kept), "kept": kept}
         if k is None:
             say("bisect: inconclusive (every state around the boundary crashed or failed differently)")
             report.note("Bisect inconclusive: the states around the boundary were all OTHER.")
             return None
         root = kept[k - 1]
+        # Bisect can infer P(k-1) = PASS and P(k) = TARGET_FAIL from the endpoints without running them.
+        # Run them explicitly so the report shows both facts as test results (usually cache hits).
+        have = {p["after_step"] for p in probes}
+        missing = [kept[:i] for i in (k - 1, k) if (kept[i - 1] if i else 0) not in have]
+        if missing:
+            probe_many(missing)
         say(f"bisect: {len(kept)} edits → {rp.runs - runs_before} test runs → first failing prefix at edit #{root}")
 
         # Stage 6: confirm from the end, ddmin if more than one cause
@@ -223,7 +230,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     else:
         extra = []
         report["confirm"] = {"step_id": root, "collateral": collateral, "outcome": PASS, "ddmin": None}
-        report["bisect"] = {"probes": probes, "boundary": root, "scan": False}
+        report["bisect"] = {"probes": probes, "boundary": root, "scan": False, "edits": len(order), "kept": order,
+                            "via": "blame_hint"}  # no bisect ran: Stage 3 already tested the boundary
 
     s = by_id[root]
     idx = order.index(root)
