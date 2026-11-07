@@ -105,3 +105,30 @@ def test_decide_counts_any_target_failure():
     assert decide([PASS] * 5) == PASS
     assert decide([PASS, OTHER, PASS]) == OTHER
     assert decide([OTHER, TARGET_FAIL]) == TARGET_FAIL
+
+
+def test_parallel_bisect_on_worker_pool_and_tiger_flag(tmp_path):
+    """Same decoy case, with B's worker pool (3 sandboxes per bisect round) and a Tiger run log.
+    (Test by Crystal, from crystal/merge-find-the-cause.)"""
+    parent, g, steps, files = make_repo(tmp_path)
+    cmd = f'"{sys.executable}" -m pytest -q -p no:cacheprovider tests/test_core.py::test_total'
+    sig = Replayer(str(tmp_path), [], cmd).run(State(g, [], g))[0].signature
+
+    class Log:
+        def __init__(self):
+            self.pruned, self.rows = False, []
+
+        def set_pruned(self, v):
+            self.pruned = v
+
+        def log(self, stage, *a, **k):
+            self.rows.append(stage)
+
+    log = Log()
+    report = Report()
+    rp = Replayer(str(tmp_path), steps, cmd, target_sig=sig, sandbox=LocalSandbox(), runlog=log, workers=3)
+    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, rp,
+                         Options(workers=3), report, say=lambda *_: None, runlog=log)
+    assert rc is not None and rc.step.id == 3 and report["bisect"]["boundary"] == 3
+    assert log.pruned is True and "bisect" in log.rows and "prune" in log.rows
+    assert len(git(tmp_path, "worktree", "list").splitlines()) == 1  # every temp worktree cleaned up
