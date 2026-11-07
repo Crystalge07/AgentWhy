@@ -24,6 +24,7 @@ class Step:
     trigger: str | None = None
     prompt: str = ""
     ts: str = ""  # ISO timestamp of the tool call; used to merge concurrent sessions
+    command: str = ""  # for kind="shell": the shell command that made this change (e.g. sed -i)
 
 
 @dataclass

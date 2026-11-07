@@ -104,6 +104,7 @@ class Fidelity:
     dropped: list[int] = field(default_factory=list)       # original ids that couldn't apply
     files: list[str] = field(default_factory=list)         # files with leftover differences
     deleted: list[str] = field(default_factory=list)       # deleted in G; replay leaves them empty
+    shell: list[int] = field(default_factory=list)         # leftover edits traced to the agent's shell commands
 
 
 def reconcile(steps: list[Step], read_base: ReadFn, read_commit: ReadFn, changed: list[str],
@@ -148,3 +149,72 @@ def reconcile(steps: list[Step], read_base: ReadFn, read_commit: ReadFn, changed
     ids = [s.id for s in out[len(kept):]]
     return out, Fidelity(matches=not extra and not dropped, unattributed=ids, dropped=dropped,
                          files=diff_files, deleted=deleted)
+
+
+def _mentions(command: str, file: str) -> bool:
+    """Does a shell command name this repo file (by repo path, or by basename as a whole word)?"""
+    import re
+
+    cmd = command.replace("\\", "/")
+    if file in cmd:
+        return True
+    base = file.rsplit("/", 1)[-1]
+    return re.search(rf"(?<![\w.-]){re.escape(base)}(?![\w.-])", cmd) is not None
+
+
+# git subcommands that never change a tracked file's content in the working tree
+_GIT_NO_WRITE = {"add", "commit", "push", "pull", "fetch", "status", "diff", "log", "show", "ls-files", "grep",
+                 "blame", "branch", "tag", "rev-parse", "remote", "config", "check-ignore", "cat-file", "ls-tree"}
+
+
+def _modifies(command: str, file: str) -> bool:
+    """Does some part of the command both name `file` and plausibly change it?
+
+    Splits on && || ; | and newlines, ignores heredoc bodies (commit messages), and skips parts that
+    only view files (cat, sed -n, grep...) or are git subcommands that don't touch file content
+    (add, commit, diff...). `sed -i`, `git checkout --`, redirects, `mv`, a script run... all count.
+    """
+    import re
+
+    from .claude_code import _is_view_only
+
+    body = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", "", command, flags=re.S)  # drop heredocs
+    for part in re.split(r"&&|\|\||;|\||\n", body):
+        part = part.strip()
+        if not part or not _mentions(part, file):
+            continue
+        # a redirect or tee into the file writes it, whatever the command (echo, cat, printf...)
+        if re.search(r"(?<![0-9&])>>?\s*['\"]?(\S*/)?" + re.escape(file.rsplit("/", 1)[-1]) + r"['\"]?(\s|$)", part) \
+                or re.search(r"\btee\b", part):
+            return True
+        if _is_view_only(part):
+            continue
+        words = part.split()
+        if words[0].rsplit("/", 1)[-1] == "git":
+            sub = next((w for w in words[1:] if not w.startswith("-")), "")
+            if sub in _GIT_NO_WRITE:
+                continue
+        return True
+    return False
+
+
+def attribute_shell_edits(steps: list[Step], fid: Fidelity, shell: list[dict]) -> None:
+    """Credit leftover (unattributed) edits to the last agent shell command that modifies the file.
+
+    Agents often change files with `sed -i`, `git checkout -- f` or a redirect instead of the Edit
+    tool. Those are still the agent's decisions: the edit gets kind="shell", the command, and the
+    prompt / reasoning / trigger in effect when the agent ran it (the *last* such command wins).
+    Edits no command names stay "unattributed" (e.g. a human tweak before committing).
+    """
+    for s in steps:
+        if s.kind != "unattributed":
+            continue
+        hits = [c for c in shell if _modifies(c["command"], s.file)]
+        if not hits:
+            continue
+        c = hits[-1]
+        s.kind, s.agent, s.command = "shell", "claude-code", c["command"]
+        s.session_id, s.ts = c["session_id"], c["ts"]
+        s.reasoning, s.trigger, s.prompt = c["reasoning"], c["trigger"], c["prompt"]
+    fid.shell = [s.id for s in steps if s.kind == "shell"]
+    fid.unattributed = [s.id for s in steps if s.kind == "unattributed"]

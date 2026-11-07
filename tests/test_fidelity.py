@@ -75,3 +75,50 @@ def test_reconcile_exact_replay_matches():
     out, fid = reconcile([mk(1, "a.py", "edit", "A = 1", "A = 2")], base.get, {"a.py": "A = 2\n"}.get,
                          ["a.py"], lambda f: False)
     assert fid.matches and fid.unattributed == [] and len(out) == 1
+
+
+def test_shell_edits_are_attributed_to_the_agents_command():
+    from whyagent.adapters import parse
+    from whyagent.adapters.fidelity import attribute_shell_edits
+    import json
+
+    def rec(kind, content):
+        return json.dumps({"type": kind, "sessionId": "s1", "cwd": "/repo", "timestamp": "2026-11-07T12:00:00Z",
+                           "message": {"content": content}})
+
+    lines = [
+        rec("user", "<local-command-stdout>Set model to Haiku</local-command-stdout>"),  # not a prompt
+        rec("user", "Just change the defaults in config.py."),
+        rec("assistant", [{"type": "text", "text": "Lowering the global defaults."},
+                          {"type": "tool_use", "id": "b0", "name": "Bash", "input": {"command": "cat payments/config.py"}},
+                          {"type": "tool_use", "id": "b1", "name": "Bash", "input": {
+                              "command": "sed -i '' 's/^MAX_RETRIES = 3$/MAX_RETRIES = 1/' payments/config.py"}}]),
+    ]
+    shell = []
+    assert parse("\n".join(lines), shell_out=shell) == []      # no Edit calls at all
+    assert [c["command"][:6] for c in shell] == ["sed -i"]      # the view-only `cat` isn't recorded
+    base, commit = {"payments/config.py": "MAX_RETRIES = 3\n", "other.py": "x\n"}, \
+        {"payments/config.py": "MAX_RETRIES = 1\n", "other.py": "y\n"}
+    steps, fid = reconcile([], base.get, commit.get, ["payments/config.py", "other.py"], lambda f: False)
+    attribute_shell_edits(steps, fid, shell)
+    by_file = {s.file: s for s in steps}
+    cfg = by_file["payments/config.py"]
+    assert cfg.kind == "shell" and cfg.command.startswith("sed -i") and cfg.session_id == "s1"
+    assert cfg.prompt == "Just change the defaults in config.py." and cfg.reasoning == "Lowering the global defaults."
+    assert by_file["other.py"].kind == "unattributed"           # no command names it: stays unattributed
+    assert fid.shell == [cfg.id] and fid.unattributed == [by_file["other.py"].id]
+
+
+def test_modifies_ignores_commits_viewers_and_heredocs():
+    from whyagent.adapters.fidelity import _modifies
+
+    f = "payments/config.py"
+    sed = ("git checkout -- scripts/smoke_dev.py && git show HEAD:payments/client.py > /tmp/_orig.py; "
+           "sed -i '' 's/^TIMEOUT_S = 10$/TIMEOUT_S = 2/' payments/config.py && grep -n TIMEOUT payments/config.py")
+    commit = ("git add payments/client.py payments/config.py tests/test_client.py && git commit -q -F - <<'EOF'\n"
+              "Fail fast\n\nLower MAX_RETRIES in payments/config.py\nEOF")
+    assert _modifies(sed, f)
+    assert _modifies(sed, "scripts/smoke_dev.py")            # git checkout -- reverts it
+    assert not _modifies(commit, f)                          # git add / commit, and the message, don't count
+    assert not _modifies("cat payments/config.py && git diff payments/config.py", f)
+    assert _modifies("echo 'X = 1' >> payments/config.py", f)

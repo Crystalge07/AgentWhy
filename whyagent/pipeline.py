@@ -68,7 +68,8 @@ def _step_dicts(steps: list[Step], read_parent: Callable[[str], str | None]) -> 
         except ValueError:
             pass
         out.append({"id": s.id, "file": s.file, "line": line, "kind": s.kind, "old_text": s.old_text,
-                    "new_text": s.new_text, "reasoning": s.reasoning, "trigger": s.trigger})
+                    "new_text": s.new_text, "reasoning": s.reasoning, "trigger": s.trigger,
+                    "command": s.command or None})
     return out
 
 
@@ -107,10 +108,14 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     report["session"] = {"id": ", ".join(sessions) or "?", "agent": next((s.agent for s in steps if s.kind != "unattributed"), "?"),
                          "prompt": next((s.prompt for s in steps if s.prompt), ""), "replay_matches": fid.matches,
                          "unattributed": bool(fid.unattributed), "unattributed_ids": fid.unattributed,
+                         "shell_ids": fid.shell,
                          "dropped": fid.dropped, "steps": _step_dicts(steps, read_parent)}
     say(f"session: {report['session']['id']} · {len(order)} edits · "
         + ("replay matches commit ✓" if fid.matches else
-           f"replay differs: {len(fid.unattributed)} unattributed edit(s) in {', '.join(fid.files)}"))
+           "replay matches commit ✓ with " + ", ".join(p for p in (
+               f"{len(fid.shell)} edit(s) made by the agent's shell commands" if fid.shell else "",
+               f"{len(fid.unattributed)} unattributed edit(s)" if fid.unattributed else "") if p)
+           + f" ({', '.join(fid.files)})"))
     if not order:
         report.note("The session has no edits outside test files, so there is nothing to bisect.")
         return None
@@ -233,6 +238,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     line = next((d["line"] for d in report["session"]["steps"] if d["id"] == root), "?")
     say(f"root cause: edit #{root} {s.file}:{line}  {s.new_text.strip().splitlines()[0][:80] if s.new_text.strip() else '(deletion)'}")
     say(f"trigger: {trigger_line(s.trigger) or '(no command output right before this edit)'}")
+    if s.command:
+        say(f"command: {s.command.strip().splitlines()[0][:200]}  (the agent edited {s.file} from the shell)")
     say(f"reasoning: {(s.reasoning or '(not recorded: hidden thinking)').strip()[:200]}")
     report["runs_total"] = rp.runs
     return rc
