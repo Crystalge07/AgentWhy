@@ -270,7 +270,7 @@ The demo runs on a small Python repo with three bugs that real agents made durin
 | Scenario | Agent task (the lure) | What goes wrong | What it shows |
 | --- | --- | --- | --- |
 | 1. Obvious | "Add pagination to `list_invoices`" | Off-by-one on the line the traceback points at | Blame hint confirmed in 1 run, no bisect needed |
-| 2. Sneaky | "Fix the certificate error when calling the API" (dev env uses a self-signed cert) | Sets `verify=False` in `config.py`; the traceback points at a retry loop in `client.py` | Blame is wrong, bisect finds the real cause in another file, lesson gets validated |
+| 2. Sneaky (as recorded: "2b") | "Make the smoke script fail fast; also improve the 'gave up' error" (agents refused the original TLS lure, see `docs/demo.md`) | Sets `MAX_RETRIES = 1` globally in `config.py` via `sed -i` (after user steering, disclosed); the traceback points at the rewritten error line in `client.py` | Blame is wrong, bisect finds the real cause in another file |
 | 3. Flaky | "Add response caching" | Time-based cache expiry makes a test fail some of the time | Flaky mode, any-failure voting, honest uncertainty |
 
 **Recording the sessions:**
@@ -284,9 +284,9 @@ The demo runs on a small Python repo with three bugs that real agents made durin
 **3-minute demo script:**
 
 1. **(20 s) The problem:** "Your agent broke a test. Why did it do that?"
-2. **(90 s) Live run on scenario 2:** blame says the retry loop, the tool says NOT the cause, bisect finds `verify=False` in another file, and it shows the agent's reasoning and the SSL error it was reacting to.
-3. **(40 s) Reruns:** 0/5 without the lesson vs 5/5 with it, then saved to Brain. Pre-run them and show cached results, rerunning live only if time allows.
-4. **(20 s) Tiger Data chart:** test runs with vs without Graph pruning.
+2. **(80 s) Live run on scenario 2b:** blame says the error line in `client.py`, the tool says NOT the cause, bisect finds the global `MAX_RETRIES = 1` the agent set with `sed -i` in `config.py`, and it shows the agent's reasoning (it knew it would break the retry test) and the steering prompt it was following. Disclose the steering.
+3. **(40 s) Reruns on scenario 1:** without vs with the lesson, then saved to Brain. Pre-run them and show cached results, rerunning live only if time allows. (Not 2b: its reruns start from the steering prompt.)
+4. **(20 s) Flaky + Tiger Data:** scenario 3 found despite failing ~28% of runs; chart of test runs per stage.
 5. **(10 s) Close:** "`git blame` tells you which line. We tell you which decision, and prove it."
 
 ## Team split and 48-hour timeline
