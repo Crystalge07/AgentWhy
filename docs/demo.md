@@ -79,6 +79,15 @@ case whyagent pins tests to HEAD for. The demo should say so plainly.
 `scenario-3` (Opus) saw the flakiness and fixed it properly, so it has no bug. `scenario-2b` is an
 earlier 2b recording polluted by stashed sessions from the failed TLS attempts; kept as a backup only.
 
+**`scenario-1-long` (2026-11-07, not demo-clean).** A longer headless Opus 5.5 session from the seed
+with the scenario 1 lure plus side work (docstrings, `--page-size` flag). It made the same real
+mistake (`list_invoices()` returns one page) and rewrote the contract test; `b29f46e` restores it.
+whyagent finds the right edit (#24 of 25, 11 pruned) in 7 runs, with and without pruning. But Entire
+attached four older sessions with uncommitted work to its checkpoint (primary: `7a566aa1`, a 2b
+attempt), so 9 edits are unattributed and the agent's reasoning isn't shown. Local branch only, not
+pushed. A clean long recording needs a machine/clone without stale sessions (try `entire clean`
+first, after asking).
+
 **`entire why` vs whyagent (demo beat for the Entire judges).** In `payments-demo` on
 `scenario-2b-clean`, `entire why payments/client.py:39` shows the session behind the decoy line, and
 `entire why payments/config.py:9` says its agent/prompt are "a best-effort guess" (the edit was a

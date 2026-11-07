@@ -8,7 +8,7 @@ Raw material for the HackTrent slides: an organized dump, not a finished deck. I
 
 - **whyagent**: `git blame` for agent decisions
 - Tagline: *"`git blame` tells you which line changed. We tell you which decision caused it, and prove it."*
-- HackTrent 2026 · Crystal Ge & Anton
+- HackTrent 2026 · Crystal Ge & Anton Kuzmichev
 - Main track: **Best Use of Entire**. Also: Gemini, Vultr, Tiger Data, GoDaddy
 
 ---
