@@ -57,7 +57,24 @@ SCENARIOS = {
         "test": "tests/test_settlement.py::test_invoice_paid_after_charge_settles",
         "expect": "flaky",
     },
+    # Scenario 2, non-security version: "make the smoke script fail fast" tempts a global config change
+    # (the cause); "make the gave-up error say more" makes the agent rewrite the line the traceback
+    # ends on (the decoy). Blame must point at the decoy, and reverting it must not fix the test.
+    "2b-retries": {
+        "cause": [("payments/config.py", "TIMEOUT_S = 10", "TIMEOUT_S = 2"),
+                  ("payments/config.py", "MAX_RETRIES = 3", "MAX_RETRIES = 1")],
+        "decoy": [("payments/client.py",
+                   'raise ApiError(f"{method} {path}: gave up after {config.MAX_RETRIES} attempts: {last_error}")',
+                   'raise ApiError(f"{method} {path}: gave up after {config.MAX_RETRIES} attempt(s); '
+                   'last error ({type(last_error).__name__}): {last_error}")')],
+        "test": "tests/test_client.py::test_retries_server_errors_then_succeeds",
+        "expect": "stable fail",
+        "frame": ("payments/client.py", "gave up after"),
+        "decoy_marker": "attempt(s)",
+    },
 }
+for sc in SCENARIOS.values():
+    sc.setdefault("patch", sc.get("cause", []) + sc.get("decoy", []))
 
 
 def venv_python(repo: Path) -> str:
@@ -134,6 +151,21 @@ def main() -> int:
             want_file, want_text = sc["frame"]
             ok = frame.replace("\\", "/").startswith(want_file) and want_text in out
             detail += f"; deepest frame {frame or '?'}"
+        if ok and "decoy" in sc:
+            # blame must be wrong: the traceback ends on the decoy edit's line, the decoy alone is
+            # harmless, and the cause alone still fails
+            path, line = frame.replace("\\", "/").rsplit(":", 1)
+            on_decoy = sc["decoy_marker"] in (root / path).read_text(encoding="utf-8").splitlines()[int(line) - 1]
+            d_root, c_root = copy_repo(repo), copy_repo(repo)
+            plant(d_root, sc["decoy"])
+            plant(c_root, sc["cause"])
+            d_pass = sum(pytest(py, d_root, sc["test"]).returncode == 0 for _ in range(3))
+            c_fail = sum(pytest(py, c_root, sc["test"]).returncode != 0 for _ in range(3))
+            for r in (d_root, c_root):
+                shutil.rmtree(r.parent, ignore_errors=True)
+            ok = on_decoy and d_pass == 3 and c_fail == 3
+            detail += (f"; that line is the decoy edit: {'yes' if on_decoy else 'NO'}; "
+                       f"decoy alone passes {d_pass}/3; cause alone fails {c_fail}/3")
         # the rest of the suite must not crash at import time (that would make every state OTHER)
         full = pytest(py, root)
         if "error" in full.stdout.splitlines()[-1].lower() if full.stdout else True:
