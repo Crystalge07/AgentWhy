@@ -105,6 +105,7 @@ class Fidelity:
     files: list[str] = field(default_factory=list)         # files with leftover differences
     deleted: list[str] = field(default_factory=list)       # deleted in G; replay leaves them empty
     shell: list[int] = field(default_factory=list)         # leftover edits traced to the agent's shell commands
+    shell_guessed: list[int] = field(default_factory=list)  # shell edits where several commands could have made them
 
 
 def reconcile(steps: list[Step], read_base: ReadFn, read_commit: ReadFn, changed: list[str],
@@ -198,23 +199,39 @@ def _modifies(command: str, file: str) -> bool:
     return False
 
 
+def _content_score(command: str, s: Step) -> int:
+    """How many of the edit's added lines appear in the command text (sed replacement, heredoc, echo...)."""
+    old = {l.strip() for l in s.old_text.splitlines()}
+    added = [l.strip() for l in s.new_text.splitlines() if l.strip() and l.strip() not in old]
+    cmd = " ".join(command.split())
+    return sum(" ".join(l.split()) in cmd for l in added)
+
+
 def attribute_shell_edits(steps: list[Step], fid: Fidelity, shell: list[dict]) -> None:
-    """Credit leftover (unattributed) edits to the last agent shell command that modifies the file.
+    """Credit leftover (unattributed) edits to the agent shell command that made them.
 
     Agents often change files with `sed -i`, `git checkout -- f` or a redirect instead of the Edit
     tool. Those are still the agent's decisions: the edit gets kind="shell", the command, and the
-    prompt / reasoning / trigger in effect when the agent ran it (the *last* such command wins).
+    prompt / reasoning / trigger in effect when the agent ran it. Among the commands that modify the
+    file, the one whose text contains the edit's added lines wins (the last one on a tie); with no
+    content match the last command wins and the edit is listed in `fid.shell_guessed`.
     Edits no command names stay "unattributed" (e.g. a human tweak before committing).
     """
+    guessed = []
     for s in steps:
         if s.kind != "unattributed":
             continue
         hits = [c for c in shell if _modifies(c["command"], s.file)]
         if not hits:
             continue
-        c = hits[-1]
+        scores = [_content_score(c["command"], s) for c in hits]
+        best = max(scores)
+        c = hits[len(scores) - 1 - scores[::-1].index(best)]  # last command with the best score
+        if best == 0 and len({h["command"] for h in hits}) > 1:
+            guessed.append(s.id)
         s.kind, s.agent, s.command = "shell", "claude-code", c["command"]
         s.session_id, s.ts = c["session_id"], c["ts"]
         s.reasoning, s.trigger, s.prompt = c["reasoning"], c["trigger"], c["prompt"]
     fid.shell = [s.id for s in steps if s.kind == "shell"]
+    fid.shell_guessed = guessed
     fid.unattributed = [s.id for s in steps if s.kind == "unattributed"]

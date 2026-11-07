@@ -69,8 +69,20 @@ def _step_dicts(steps: list[Step], read_parent: Callable[[str], str | None]) -> 
             pass
         out.append({"id": s.id, "file": s.file, "line": line, "kind": s.kind, "old_text": s.old_text,
                     "new_text": s.new_text, "reasoning": s.reasoning, "trigger": s.trigger,
-                    "command": s.command or None})
+                    "command": s.command or None, "test": is_test_file(s.file)})
     return out
+
+
+def blind_bisect_runs(order: list[int], root: int, workers: int) -> int:
+    """States a bisect over all of `order` would test, given that P(j) fails iff it contains `root`."""
+    tested = [0]
+
+    def fake(prefixes):
+        tested[0] += len(prefixes)
+        return [TARGET_FAIL if root in p else PASS for p in prefixes]
+
+    prefix_bisect_parallel(order, fake, workers=workers)
+    return tested[0]
 
 
 def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, parent: str, head: str,
@@ -92,14 +104,15 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     def run(stage: str):
         def go(ids: list[int]) -> str:
             rp.stage = stage  # tags Tiger rows
-            return record(stage, ids, rp.run(State(parent, list(ids), head), opts.n))
+            return record(stage, ids, rp.run(State(parent, list(ids), head), opts.n, until_fail=opts.n > 1))
         return go
 
     def run_many(stage: str):
         """Several prefixes at once on B's worker pool (Replayer.run_many)."""
         def go(prefixes: list[list[int]]) -> list[str]:
             rp.stage = stage
-            results = rp.run_many([State(parent, list(p), head) for p in prefixes], opts.n)
+            results = rp.run_many([State(parent, list(p), head) for p in prefixes], opts.n,
+                                  until_fail=opts.n > 1)
             return [record(stage, p, res) for p, res in zip(prefixes, results)]
         return go
 
@@ -108,7 +121,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     report["session"] = {"id": ", ".join(sessions) or "?", "agent": next((s.agent for s in steps if s.kind != "unattributed"), "?"),
                          "prompt": next((s.prompt for s in steps if s.prompt), ""), "replay_matches": fid.matches,
                          "unattributed": bool(fid.unattributed), "unattributed_ids": fid.unattributed,
-                         "shell_ids": fid.shell,
+                         "shell_ids": fid.shell, "shell_guessed": fid.shell_guessed,
                          "dropped": fid.dropped, "steps": _step_dicts(steps, read_parent)}
     say(f"session: {report['session']['id']} · {len(order)} edits · "
         + ("replay matches commit ✓" if fid.matches else
@@ -116,6 +129,10 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                f"{len(fid.shell)} edit(s) made by the agent's shell commands" if fid.shell else "",
                f"{len(fid.unattributed)} unattributed edit(s)" if fid.unattributed else "") if p)
            + f" ({', '.join(fid.files)})"))
+    if fid.shell_guessed:
+        report.note("Several agent shell commands could have made edit(s) "
+                    + ", ".join(f"#{i}" for i in fid.shell_guessed)
+                    + "; credited to the last one. Check its command and reasoning before trusting them.")
     if not order:
         report.note("The session has no edits outside test files, so there is nothing to bisect.")
         return None
@@ -178,6 +195,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                         + ("still fails without them ✓ pruned" if verified else
                            f"{verdict} without them → graph missed a dependency, pruning dropped"))
                 else:
+                    report["pruning"] = {"pruned": [], "candidates": [], "verified": None, "source": graph.SOURCE,
+                                         "runs_with": None, "runs_without": None}
                     say("pruning: every edit is reachable from the test, nothing to prune")
 
         # Stage 5: prefix bisect
@@ -202,6 +221,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             report.note("Bisect inconclusive: the states around the boundary were all OTHER.")
             return None
         root = kept[k - 1]
+        searched = len(probes)  # states the search itself tested, before the explicit boundary checks
         # Bisect can infer P(k-1) = PASS and P(k) = TARGET_FAIL from the endpoints without running them.
         # Run them explicitly so the report shows both facts as test results (usually cache hits).
         have = {p["after_step"] for p in probes}
@@ -209,6 +229,14 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         if missing:
             probe_many(missing)
         say(f"bisect: {len(kept)} edits → {rp.runs - runs_before} test runs → first failing prefix at edit #{root}")
+        pr = report.get("pruning")
+        if pr and pr.get("verified") and not opts.scan:
+            # Savings: the verification run proved the pruned edits don't matter, so a blind bisect over every
+            # edit would see P(j) fail exactly when the prefix contains the root. Simulate it to count its runs.
+            pr["runs_with"] = (1 + searched) * opts.n  # + the verification run; search states only, like the blind count
+            pr["runs_without"] = blind_bisect_runs(order, root, opts.workers) * opts.n
+            pr["runs_without_simulated"] = True
+            say(f"pruning savings: {pr['runs_with']} runs with pruning vs {pr['runs_without']} for a blind bisect")
 
         # Stage 6: confirm from the end, ddmin if more than one cause
         ok, coll = confirm(kept, root, dep, run("confirm"))

@@ -80,6 +80,7 @@ header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
 .cell .num { font-weight: 700; font-size: 13px; }
 .cell .file { font-family: var(--mono); font-size: 10px; color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+.cell.testedit { opacity: .6; border-style: dotted; }
 .cell.pruned { opacity: .45; background: repeating-linear-gradient(135deg, transparent 0 5px, var(--line) 5px 6px); }
 .cell.cause { border: 2px solid var(--fail); background: var(--fail-bg); }
 .cell.blame { border: 2px dashed var(--other); }
@@ -175,7 +176,7 @@ const idx = cause ? steps.indexOf(cause) : -1;
 const keptIds = bi && bi.kept ? bi.kept : null;
 const prevKept = !cause ? null : keptIds
   ? (keptIds.indexOf(cause.id) > 0 ? byId[keptIds[keptIds.indexOf(cause.id) - 1]] : null)
-  : (idx > 0 ? steps.slice(0, idx).filter(s => !(pr && (pr.pruned || []).includes(s.id))).pop() : null);
+  : (idx > 0 ? steps.slice(0, idx).filter(s => !s.test && !(pr && (pr.pruned || []).includes(s.id))).pop() : null);
 // P(0) is the guilty commit's parent; the pipeline tests it explicitly (after_step 0), else Stage 1 showed it passes
 const p0 = bi && bi.probes && bi.probes.find(p => p.after_step === 0);
 const pBefore = !cause ? null : !prevKept ? (p0 || {outcome: "PASS"}) : bi && bi.probes && bi.probes.find(p => p.after_step === prevKept.id);
@@ -210,15 +211,18 @@ html += `<section class="verdict">
 // Pipeline
 const st = [];
 const S = (n, name, state, msg) => st.push({n, name, state, msg});
-S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}` : "");
+S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}${pre.runs_per_state ? ` (fails ~${Math.round(pre.fail_rate * 100)}% of runs → ${pre.runs_per_state} runs per state, stopping at the first failure)` : ""}` : "");
 S(1, "commit", cm ? "done" : "todo", cm ? (cm.method === "blame" ? `blamed ${short(cm.sha)} ✓ confirmed (parent passes, commit fails)` : `${cm.blamed ? `blame hint ${short(cm.blamed)} wrong, ` : ""}bisected → ${short(cm.sha)}`) + (cm.checkpoint ? ` · checkpoint ${cm.checkpoint}` : "") + (cm.human ? " · no checkpoint, human-written" : "") : "");
 const shellN = (ses && ses.shell_ids || []).length, unattrN = (ses && ses.unattributed_ids || []).length;
 S(2, "session", ses ? (unattrN || (ses.replay_matches === false && !shellN) ? "warn" : "done") : "todo", ses ? `${esc(ses.id)} · ${steps.length} edits · replay ${ses.replay_matches ? "matches commit ✓" : `matches commit ✓ with ${[shellN ? `${shellN} edit${shellN > 1 ? "s" : ""} made by the agent's shell commands` : "", unattrN ? `${unattrN} unattributed edit${unattrN > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ") || "a leftover diff kept as an unattributed edit"}`}` : "");
-S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : "");
-S(4, "pruning", pr ? (pr.verified ? "done" : "warn") : "todo", pr ? (pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
-S(5, "bisect", bi ? "done" : "todo", bi && bi.via === "blame_hint" ? `skipped: the blame hint already tested the boundary at edit #${bi.boundary} (${bi.probes.length} runs)` : bi ? `${bi.edits != null ? bi.edits : steps.length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
+const hintRight = (bh && bh.is_cause) || (bi && bi.via === "blame_hint");
+S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : ses ? (m.line ? `skipped (${esc(m.line)} wasn't written by this session)` : "skipped (no --line, and the traceback has no frame outside the tests)") : "");
+S(4, "pruning", hintRight ? "todo" : pr ? (pr.verified === false ? "warn" : "done") : "todo",
+  hintRight ? "skipped, the blame hint was right" :
+  pr ? (!(pr.candidates || []).length ? "every edit is reachable from the test, nothing to prune" : pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
+S(5, "bisect", hintRight ? "todo" : bi ? "done" : "todo", hintRight ? `skipped, boundary checked directly: the test passes before edit #${rc ? rc.step_id : "?"} and fails after it (${(bi && bi.probes || []).length} runs)` : bi ? `${bi.edits ?? steps.filter(s => !s.test).length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.length} test runs → first failing prefix at edit #${bi.boundary}` : "");
 S(6, "confirm", cf ? (cf.outcome === "PASS" ? "done" : "warn") : "todo", cf ? (cf.outcome === "PASS" ? `revert #${cf.step_id} from final → test passes ✓ root cause${cf.collateral && cf.collateral.length ? ` (collateral ${cf.collateral.map(i => "#" + i).join(", ")})` : ""}` : `revert #${cf.step_id} still fails → ddmin ${cf.ddmin ? "→ {" + cf.ddmin.join(", ") + "}" : "inconclusive"}`) : "");
-S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : "written by " + esc(ls.source || "Gemini")}` : "");
+S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : ls.source === "given" ? "given with --lesson" : "written by " + esc(ls.source || "Gemini")}` : "");
 S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${valid(rr.a)} · with lesson ${count(rr.b)}/${valid(rr.b)} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");
 function count(a) { return a.filter(x => x === "PASS").length; }
 function valid(a) { return a.filter(x => x !== "OTHER").length; }
@@ -235,7 +239,7 @@ if (steps.length) {
   let cells = `<div class="cell" style="cursor:default;opacity:.8" title="Base: the guilty commit's parent"><span class="num">base</span><span class="file">${short(cm && cm.sha)}^</span></div>`;
   let probeRow = `<div class="probe">${probes[0] ? chip(probes[0]) : chip("PASS")}</div>`;
   for (const s of steps) {
-    const cls = ["cell", pruned.has(s.id) && "pruned", rc && s.id === rc.step_id && "cause", blameIds.has(s.id) && !(rc && s.id === rc.step_id) && "blame", collat.has(s.id) && "collateral"].filter(Boolean).join(" ");
+    const cls = ["cell", s.test && "testedit", pruned.has(s.id) && "pruned", rc && s.id === rc.step_id && "cause", blameIds.has(s.id) && !(rc && s.id === rc.step_id) && "blame", collat.has(s.id) && "collateral"].filter(Boolean).join(" ");
     const tag = rc && s.id === rc.step_id ? "CAUSE" : blameIds.has(s.id) ? "BLAME" : "";
     cells += `<button class="${cls}" data-id="${s.id}" title="${esc(loc(s))}">${tag ? `<span class="tag">${tag}</span>` : ""}<span class="num">#${s.id}</span><span class="file">${esc(s.file.split("/").pop())}</span></button>`;
     probeRow += `<div class="probe">${probes[s.id] ? chip(probes[s.id]) : ""}</div>`;
@@ -248,6 +252,7 @@ if (steps.length) {
       <span><i style="border:2px dashed var(--other)"></i>blame hint</span>
       ${pruned.size ? `<span><i style="background:repeating-linear-gradient(135deg,transparent 0 3px,var(--muted) 3px 4px);opacity:.5"></i>pruned by Graph</span>` : ""}
       ${collat.size ? `<span><i style="border:2px solid var(--other)"></i>collateral</span>` : ""}
+      ${steps.some(s => s.test) ? `<span><i style="border:1px dotted var(--muted);opacity:.6"></i>test edit (tests pinned to HEAD, not bisected)</span>` : ""}
       <span>click an edit for its reasoning and diff</span></div>
     <div class="detail" id="detail"></div></div>`;
 }
@@ -283,7 +288,7 @@ if (runs.length) {
     <div class="label">Runs per stage</div><div class="bars">${Object.entries(byStage).map(([k, v]) => `<div class="bar"><span>${esc(k)}</span><div class="track"><div class="fill" style="width:${v / max * 100}%"></div></div><span class="mono">${v}</span></div>`).join("")}</div></div>
     <div>${pr && pr.runs_without != null ? `<div class="label">Graph pruning savings</div><div class="bars">
       <div class="bar"><span>with pruning</span><div class="track"><div class="fill" style="width:${pr.runs_with / Math.max(pr.runs_with, pr.runs_without) * 100}%"></div></div><span class="mono">${pr.runs_with}</span></div>
-      <div class="bar"><span>blind bisect</span><div class="track"><div class="fill" style="width:${pr.runs_without / Math.max(pr.runs_with, pr.runs_without) * 100}%;background:var(--muted)"></div></div><span class="mono">${pr.runs_without}</span></div></div>` :
+      <div class="bar"><span>blind bisect${pr.runs_without_simulated ? " (simulated)" : ""}</span><div class="track"><div class="fill" style="width:${pr.runs_without / Math.max(pr.runs_with, pr.runs_without) * 100}%;background:var(--muted)"></div></div><span class="mono">${pr.runs_without}</span></div></div>` :
       `<div class="label">Total</div><div style="font-size:28px;font-weight:700">${runs.length}</div><div class="muted">test runs, ${(runs.reduce((a, r) => a + (r.duration_ms || 0), 0) / 1000).toFixed(1)} s of test time</div>`}</div></div>
     <details><summary>All ${runs.length} runs</summary><table><thead><tr><th>#</th><th>Stage</th><th>State</th><th>Outcome</th><th style="text-align:right">ms</th></tr></thead><tbody>
     ${runs.map((r, i) => `<tr><td class="num">${i + 1}</td><td>${esc(r.stage)}</td><td class="mono">${esc(r.label)}</td><td>${chip(r.outcome)}</td><td class="num">${r.duration_ms ?? ""}</td></tr>`).join("")}
@@ -311,7 +316,7 @@ function show(id) {
   if (rc && s.id === rc.step_id) tags.push(chip("TARGET_FAIL", "root cause"));
   if (bh && bh.step_ids.includes(s.id)) tags.push(chip("OTHER", bh.is_cause ? "blame hint ✓" : "blame hint, not the cause"));
   if (pr && pr.verified && pr.pruned.includes(s.id)) tags.push(chip("INFO", "pruned"));
-  if (s.kind && s.kind !== "edit") tags.push(chip("INFO", s.kind));
+  if (s.kind && s.kind !== "edit") tags.push(chip("INFO", s.kind + (((ses && ses.shell_guessed) || []).includes(s.id) ? " (command guessed)" : "")));
   el.innerHTML = `<div class="detail-head"><h3>Edit #${s.id} · <code>${esc(loc(s))}</code></h3>${tags.join("")}</div>
     ${s.reasoning || s.trigger ? `<div class="two">
       <div><div class="label">What the agent was reacting to</div>${s.trigger ? `<pre class="trigger">${esc(s.trigger)}</pre>` : `<div class="muted">No tool output right before this edit.</div>`}</div>

@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 from whyagent.adapters.fidelity import Fidelity, apply
-from whyagent.pipeline import Options, find_root_cause
+from whyagent.pipeline import Options, blind_bisect_runs, find_root_cause
 from whyagent.replay import LocalSandbox, Replayer
 from whyagent.report import Report
 from whyagent.types import PASS, TARGET_FAIL, State, Step
@@ -68,6 +68,12 @@ def test_finds_real_cause_when_blame_points_at_a_decoy(tmp_path):
     assert report["pruning"]["verified"] and report["pruning"]["pruned"] == [2, 5]
     assert report["confirm"]["outcome"] == PASS
     assert report["bisect"]["boundary"] == 3
+    # "fails right after" has a real probe even when the boundary is the last kept edit
+    assert any(p["after_step"] == 3 and p["outcome"] == TARGET_FAIL for p in report["bisect"]["probes"])
+    pr = report["pruning"]
+    assert pr["runs_with"] is not None and pr["runs_without"] is not None and pr["runs_without_simulated"]
+    assert report["bisect"]["edits"] == 4
+    assert {s["id"]: s["test"] for s in report["session"]["steps"]}[3] is False
     assert [s.id for s in rc.edits_before] == [1, 2] and rc.before_state.step_ids == [1, 2]
     assert "assert 22 == 20" in rc.failing_output
     assert rp.runs <= 8
@@ -132,3 +138,10 @@ def test_parallel_bisect_on_worker_pool_and_tiger_flag(tmp_path):
     assert rc is not None and rc.step.id == 3 and report["bisect"]["boundary"] == 3
     assert log.pruned is True and "bisect" in log.rows and "prune" in log.rows
     assert len(git(tmp_path, "worktree", "list").splitlines()) == 1  # every temp worktree cleaned up
+
+
+def test_blind_bisect_runs_counts_states_a_bisect_would_test():
+    order = list(range(1, 16))
+    assert blind_bisect_runs(order, 7, workers=1) == 4  # binary search over 15 edits: 4 states
+    assert blind_bisect_runs(order, 15, workers=1) == 4  # boundary at the end: P(15) is known, not tested
+    assert blind_bisect_runs([1], 1, workers=1) == 0      # one edit: P(0) and P(1) already known

@@ -24,3 +24,22 @@ def test_report_write(tmp_path):
     out = r.write(tmp_path / "r.html")
     assert out.exists() and (tmp_path / "r.json").exists()
     assert json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))["runs"][0]["outcome"] == "TARGET_FAIL"
+
+
+def test_line_from_traceback_takes_the_deepest_non_test_frame():
+    from whyagent.cli import line_from_traceback
+    out = """
+tests/test_client.py:52: in test_retries_server_errors_then_succeeds
+    assert client.get_invoice("inv_001").id == "inv_001"
+payments/client.py:61: in get_invoice
+    return Invoice.from_dict(self._request("GET", f"/invoices/{invoice_id}"))
+>       raise ApiError(f"{method} {path}: gave up after {attempts} attempts; "
+E       payments.client.ApiError: GET /invoices/inv_001: gave up after 1 attempts
+
+payments/client.py:39: ApiError
+=========================== short test summary info ============================
+"""
+    assert line_from_traceback(out) == "payments/client.py:39"
+    # assertion inside the test itself: no non-test frame, so no hint (bisect instead)
+    assert line_from_traceback("tests/test_client.py:30: AssertionError\n") is None
+    assert line_from_traceback("pkg\\mod.py:7: ValueError\n") == "pkg/mod.py:7"

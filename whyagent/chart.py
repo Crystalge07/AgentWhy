@@ -11,34 +11,48 @@ import json
 from datetime import datetime, timezone
 
 FETCH = """
-WITH latest AS (
-    SELECT DISTINCT ON (label, pruned) analysis_id, label, pruned, started
-    FROM analyses ORDER BY label, pruned, started DESC
-)
-SELECT l.label, l.pruned, l.analysis_id, l.started, r.stage,
+SELECT a.label, a.pruned, a.analysis_id, a.started, r.stage,
        sum(r.test_runs)::int AS runs, coalesce(sum(r.tokens), 0)::bigint AS tokens
-FROM latest l JOIN {source} r USING (analysis_id)
+FROM analyses a JOIN {source} r USING (analysis_id)
 WHERE r.stage <> 'rerun'
 GROUP BY 1, 2, 3, 4, 5
-ORDER BY 1, 2, 5
+ORDER BY 4, 5
 """
+
+# Stages pruning can change. Precheck and commit bisect cost the same either way, so they only dilute it.
+EDIT_STAGES = ("blame_hint", "prune", "bisect", "confirm", "ddmin")
+
+
+def bug_name(label: str) -> str:
+    """'repo: <any test command> tests/x.py::test_y' -> 'repo: tests/x.py::test_y', so the same bug pairs up
+    whether the command was `pytest ...`, `python -m pytest ...` or a full interpreter path (Windows/Mac)."""
+    repo, _, cmd = label.partition(": ")
+    node = next((w for w in cmd.split() if "::" in w), None)
+    return f"{repo}: {node.replace(chr(92), '/')}" if node and cmd else label
+
 
 RAW = "(SELECT analysis_id, stage, (count(*) FILTER (WHERE NOT cached)) AS test_runs, sum(tokens) AS tokens" \
       " FROM runs GROUP BY analysis_id, stage)"
 
 
 def fetch(conn) -> list[dict]:
-    """One dict per (bug, pruned) pair: {label, pruned, analysis_id, started, stages: {stage: runs}}."""
+    """One dict per (bug, pruned) pair, the latest analysis of each that got to edit-level search (bisect or
+    pruning; a blame-hint hit or a reruns-only run has nothing to compare):
+    {label, pruned, analysis_id, started, stages: {stage: runs}}."""
     try:
         conn.execute("CALL refresh_continuous_aggregate('runs_by_stage', NULL, NULL)")
         rows = conn.execute(FETCH.format(source="runs_by_stage")).fetchall()
     except Exception:  # no permission to refresh, or no aggregate: same numbers from the raw table
         rows = conn.execute(FETCH.format(source=RAW)).fetchall()
-    out: dict[tuple, dict] = {}
+    per: dict[str, dict] = {}
     for label, pruned, aid, started, stage, runs, _tokens in rows:
-        d = out.setdefault((label, pruned), {"label": label, "pruned": pruned, "analysis_id": aid,
-                                             "started": started.isoformat(timespec="minutes"), "stages": {}})
+        d = per.setdefault(aid, {"label": bug_name(label), "pruned": pruned, "analysis_id": aid,
+                                 "started": started.isoformat(timespec="minutes"), "stages": {}})
         d["stages"][stage] = runs
+    out: dict[tuple, dict] = {}
+    for d in sorted(per.values(), key=lambda d: d["started"]):  # later analyses replace earlier ones
+        if "bisect" in d["stages"] or "prune" in d["stages"]:
+            out[(d["label"], d["pruned"])] = d
     return list(out.values())
 
 
@@ -95,14 +109,15 @@ td.n { text-align:right; font-variant-numeric:tabular-nums; }
 (() => {
 const D = JSON.parse(document.getElementById("data").textContent) || {rows: []};
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const total = r => Object.values(r.stages).reduce((a, b) => a + b, 0);
+const EDIT = new Set(["blame_hint", "prune", "bisect", "confirm", "ddmin"]);
+const total = r => Object.entries(r.stages).reduce((a, [s, n]) => a + (EDIT.has(s) ? n : 0), 0);
 const bugs = {};
 for (const r of D.rows) (bugs[r.label] ||= {})[r.pruned ? "pruned" : "blind"] = r;
 const labels = Object.keys(bugs).sort();
 const paired = labels.filter(l => bugs[l].pruned && bugs[l].blind);
 const sum = k => paired.reduce((a, l) => a + total(bugs[l][k]), 0);
 const max = Math.max(1, ...D.rows.map(total));
-let h = `<h1>Graph pruning savings</h1><p class="sub">Test runs whyagent needed to prove the root cause, with Entire Graph pruning on vs plain bisect. Logged in Tiger Data.</p>`;
+let h = `<h1>Graph pruning savings</h1><p class="sub">Test runs whyagent needed to find and prove the guilty edit inside the agent session (pruning, bisect, confirm), with Graph pruning on vs plain bisect. Precheck and commit search cost the same either way and are left out. Logged in Tiger Data.</p>`;
 if (!labels.length) {
   h += `<div class="panel empty">No analyses logged yet. Run whyagent with <code>TIGER_DATABASE_URL</code> set, once normally and once with <code>--no-prune</code>.</div>`;
 } else {

@@ -191,6 +191,17 @@ def test_gemini_retries_5xx_only(monkeypatch):
     assert len(calls) == 1
 
 
+def test_claude_code_agent_runs_on_a_subscription_token(monkeypatch):
+    from whyagent.rerun import ClaudeCode
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+    c = ClaudeCode()
+    assert c.env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok" and "ANTHROPIC_API_KEY" not in c.env  # no empty key
+    assert c.error("crash", 1) != "Claude Code error: set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`)"
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+    assert "claude setup-token" in ClaudeCode().error("crash", 1)
+
+
 def test_baseline_leaves_out_tests_the_session_added():
     """Tests that only pass because of code the original agent invented aren't required of reruns."""
     from types import SimpleNamespace

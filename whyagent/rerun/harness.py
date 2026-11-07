@@ -103,8 +103,12 @@ class GeminiCLI(Agent):
         return total or None
 
 
+_CLAUDE_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+
+
 class ClaudeCode(Agent):
-    """PRD backup rerun agent: Claude Code headless. Needs ANTHROPIC_API_KEY (no subscription login in the container)."""
+    """PRD backup rerun agent: Claude Code headless. Needs ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN from
+    `claude setup-token` to run on a Claude subscription (the container has no interactive login)."""
 
     def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "2.1.310"):
         model = model or os.environ.get("WHYAGENT_CLAUDE_MODEL")
@@ -114,8 +118,8 @@ class ClaudeCode(Agent):
                      " --dangerously-skip-permissions" + (f" --model {model}" if model else "")),
             image_lines=_NODE_LINES[:-1] + [
                 _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@{version}"],
-            env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""), "DISABLE_AUTOUPDATER": "1",
-                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+            env={**{k: os.environ[k] for k in _CLAUDE_AUTH if os.environ.get(k)},  # an empty key would shadow the other
+                 "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
             allow=["api.anthropic.com"],
         )
 
@@ -124,8 +128,8 @@ class ClaudeCode(Agent):
         if data and data.get("is_error") and not str(data.get("subtype", "")).startswith("error_max_turns"):
             if (data.get("num_turns") or 0) <= 1:  # failed before doing any work: auth, quota, bad model
                 return f"Claude Code error: {str(data.get('result') or data.get('subtype'))[:200]}"
-        if not os.environ.get("ANTHROPIC_API_KEY") and exit_code != 0:
-            return "Claude Code error: ANTHROPIC_API_KEY is not set"
+        if not any(os.environ.get(k) for k in _CLAUDE_AUTH) and exit_code != 0:
+            return "Claude Code error: set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`)"
         return super().error(output, exit_code)
 
     def tokens(self, output: str) -> int | None:
