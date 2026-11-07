@@ -309,10 +309,19 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
         report.note(f"Aborted: the good commit doesn't pass {N}/{N}, so the test fails without the agent's changes.")
         return _finish(report, args, 2)
     if h_fail == 0:
-        print(f"precheck: HEAD passes {N}/{N} → nothing to explain")
-        report.note(f"HEAD passes {N}/{N}, nothing to explain.")
-        return _finish(report, args, 2)
-    print(f"precheck: HEAD fails {h_fail}/{N}, good commit passes {N}/{N} → {mode}")
+        # The user says this test fails, and a flaky bug can pass 5 in a row (the recorded ~28% cache bug
+        # does ~19% of the time). Look harder before giving up; these runs are reused by the flaky estimate.
+        rp.stage = "precheck"
+        head_res = rp.run(State(head, [], head), FLAKY_ESTIMATE_RUNS)
+        report.log_runs("precheck", state_label(State(head, [], head)), head_res[N:])
+        h_fail = sum(r.outcome != PASS for r in head_res)
+        if h_fail == 0:
+            print(f"precheck: HEAD passes {len(head_res)}/{len(head_res)} → nothing to explain")
+            report.note(f"HEAD passes {len(head_res)}/{len(head_res)}, nothing to explain.")
+            return _finish(report, args, 2)
+        mode = "flaky"
+        report["precheck"].update(head_fail=h_fail, n=len(head_res), mode=mode)
+    print(f"precheck: HEAD fails {h_fail}/{len(head_res)}, good commit passes {N}/{N} → {mode}")
     target_sig = next(r.signature for r in head_res if r.outcome != PASS)
     report["precheck"]["signature"] = target_sig
     n = 1

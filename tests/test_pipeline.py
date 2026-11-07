@@ -145,3 +145,33 @@ def test_blind_bisect_runs_counts_states_a_bisect_would_test():
     assert blind_bisect_runs(order, 7, workers=1) == 4  # binary search over 15 edits: 4 states
     assert blind_bisect_runs(order, 15, workers=1) == 4  # boundary at the end: P(15) is known, not tested
     assert blind_bisect_runs([1], 1, workers=1) == 0      # one edit: P(0) and P(1) already known
+
+
+def test_precheck_looks_harder_when_head_passes_5_in_a_row(tmp_path, monkeypatch, capsys):
+    """A flaky bug can pass the first 5 precheck runs; the precheck must not give up on it."""
+    from whyagent.cli import main
+
+    repo, counter = tmp_path / "repo", tmp_path / "count.txt"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@t")
+    git(repo, "config", "user.name", "t")
+    (repo / "app.py").write_text("BUGGY = False\n")
+    (repo / "tests").mkdir()
+    # fails only on its 7th run, and only when the bug is present
+    (repo / "tests/check.py").write_text(
+        "import sys, pathlib; sys.path.insert(0, '.'); import app\n"
+        "if not app.BUGGY: sys.exit(0)\n"  # only HEAD's runs advance the counter
+        f"c = pathlib.Path(r'{counter}'); n = int(c.read_text()) + 1 if c.exists() else 1; c.write_text(str(n))\n"
+        "sys.exit(1 if n == 7 else 0)\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "good")
+    good = git(repo, "rev-parse", "HEAD")
+    (repo / "app.py").write_text("BUGGY = True\n")
+    git(repo, "commit", "-qam", "bug (human commit, no Entire trailer)")
+    monkeypatch.chdir(repo)
+    code = main(["--sandbox", "local", "--workers", "1", "--no-rerun", "--good", good,
+                 "--test", f'"{sys.executable}" tests/check.py', "--report", str(tmp_path / "r.html")])
+    out = capsys.readouterr().out
+    assert "nothing to explain" not in out
+    assert "HEAD fails 1/15" in out and "flaky" in out
