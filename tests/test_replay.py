@@ -27,6 +27,24 @@ def test_build_and_run(tmp_path):
     assert rp.runs == 2
 
 
+def test_build_preserves_non_ascii_source(tmp_path):
+    """Edits are applied as UTF-8 on every OS (Windows defaults to cp1252 and would mangle or crash)."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_text('MARK = "✓ café “quoted”"\nOK = True\n', encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "OK = True", "OK = False")]
+    rp = Replayer(str(tmp_path), steps, "true")
+    d = rp.build(State(base, [1], base))
+    try:
+        assert (tmp_path.__class__(d) / "app.py").read_text(encoding="utf-8") == 'MARK = "✓ café “quoted”"\nOK = False\n'
+    finally:
+        rp.teardown(d)
+
+
 import pytest
 
 from whyagent.replay import DockerSandbox, docker_available

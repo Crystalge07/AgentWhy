@@ -36,7 +36,7 @@ def _finish(report: Report, args, code: int) -> int:
 def cmd_render(args) -> int:
     report = Report()
     report.clear()
-    report.update(json.loads(Path(args.render).read_text()))
+    report.update(json.loads(Path(args.render).read_text(encoding="utf-8")))
     return _finish(report, args, 0)
 
 

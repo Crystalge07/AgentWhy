@@ -8,7 +8,7 @@ SAMPLE = Path(__file__).parent.parent / "examples" / "sample_report.json"
 
 
 def test_render_embeds_data_and_escapes_script_close():
-    data = json.loads(SAMPLE.read_text())
+    data = json.loads(SAMPLE.read_text(encoding="utf-8"))
     data["notes"].append("</script><b>x</b>")
     html = render_html(data)
     assert "/*__WHYAGENT_DATA__*/" not in html
@@ -23,4 +23,4 @@ def test_report_write(tmp_path):
     r["precheck"] = {"head_fail": 3, "good_pass": 3, "n": 3, "mode": "stable"}
     out = r.write(tmp_path / "r.html")
     assert out.exists() and (tmp_path / "r.json").exists()
-    assert json.loads((tmp_path / "r.json").read_text())["runs"][0]["outcome"] == "TARGET_FAIL"
+    assert json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))["runs"][0]["outcome"] == "TARGET_FAIL"

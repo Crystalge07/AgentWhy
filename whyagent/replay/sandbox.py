@@ -108,10 +108,10 @@ class DockerSandbox:
             if "Dockerfile" not in files:
                 Path(ctx, "Dockerfile").write_text(
                     f"FROM {self.base_image}\nWORKDIR /work\nCOPY . /work\n"
-                    f"RUN {self.setup or _default_setup(files)}\n")
+                    f"RUN {self.setup or _default_setup(files)}\n", encoding="utf-8")
             elif self.setup:
                 df = Path(ctx, "Dockerfile")
-                df.write_text(df.read_text() + f"\nRUN {self.setup}\n")
+                df.write_text(df.read_text(encoding="utf-8") + f"\nRUN {self.setup}\n", encoding="utf-8")
             if not self.quiet:
                 print(f"sandbox: building image {tag} (once per HEAD)…", file=sys.stderr)
             p = subprocess.run(["docker", "build", "-t", tag, ctx], capture_output=True, **_ENC)

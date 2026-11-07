@@ -54,14 +54,14 @@ class Replayer:
                 continue
             p = Path(d) / os.path.relpath(s.file, self.repo) if os.path.isabs(s.file) else Path(d) / s.file
             p.parent.mkdir(parents=True, exist_ok=True)
-            text = p.read_text() if p.exists() else ""
+            text = p.read_text(encoding="utf-8") if p.exists() else ""
             if s.old_text == "":
                 text = text + s.new_text if text else s.new_text
             elif text.count(s.old_text) >= 1:
                 text = text.replace(s.old_text, s.new_text, 1)
             else:
                 raise ValueError(f"step {sid}: old_text not found in {s.file}")
-            p.write_text(text)
+            p.write_text(text, encoding="utf-8")
         # pin test files from pinned_tests_from
         for f in _git("ls-tree", "-r", "--name-only", state.pinned_tests_from, cwd=self.repo).splitlines():
             if is_test_file(f, self.test_globs):
