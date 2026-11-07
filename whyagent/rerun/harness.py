@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..replay import Replayer, is_test_file
 from ..replay.egress import Egress
-from ..types import RootCause
+from ..types import RootCause, State
 
 PASS, FAIL, TAMPERED, REGRESSED, OTHER = "PASS", "FAIL", "TAMPERED", "REGRESSED", "OTHER"
 _PASSED_RE = re.compile(r"^PASSED (\S+)", re.M)
@@ -183,6 +183,7 @@ class Reruns:
         self.agent_timeout, self.workers, self.runlog = agent_timeout, workers, runlog
         self.image = None
         self._baseline: set[str] | None = None
+        self.excluded: list[str] = []  # pass at G but not before the session: not required of reruns
         self._prepared = False
         self._abort: str | None = None
         self._egress: Egress | None = None
@@ -193,12 +194,23 @@ class Reruns:
         sb = self.rp.sandbox
         if self.agent.image_lines and hasattr(sb, "extend"):
             self.image = sb.extend(self.agent.name, self.agent.image_lines)
-        if self.suite_cmd:  # tests that pass at G must still pass after the rerun
-            d = self.rp.build(rc.head_state)
-            try:
-                self._baseline = passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
-            finally:
-                self.rp.teardown(d)
+        if self.suite_cmd:
+            # Regression baseline: tests that pass at G *and* already passed before the session (G's
+            # parent, tests pinned from HEAD). Tests the original agent wrote for an API it invented
+            # (e.g. scenario 1's iter_all_invoices) fail before the session, and a rerun can't be
+            # expected to invent the same names, so they're left out (listed in self.excluded).
+            at_g = self._passed(rc.head_state)
+            before = State(rc.before_state.base_commit, [], rc.before_state.pinned_tests_from)
+            pre_session = self._passed(before)
+            self._baseline = at_g & pre_session
+            self.excluded = sorted(at_g - pre_session)
+
+    def _passed(self, state: State) -> set[str]:
+        d = self.rp.build(state)
+        try:
+            return passed_tests(self.rp.sandbox.exec(d, self.suite_cmd, self.rp.timeout).output)
+        finally:
+            self.rp.teardown(d)
 
     def one(self, rc: RootCause, lesson: str | None, arm: str) -> RerunResult:
         if not self._prepared:

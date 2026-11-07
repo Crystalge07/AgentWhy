@@ -189,3 +189,29 @@ def test_gemini_retries_5xx_only(monkeypatch):
     with pytest.raises(Err):
         lesson.gemini_generate("p", model="m")
     assert len(calls) == 1
+
+
+def test_baseline_leaves_out_tests_the_session_added():
+    """Tests that only pass because of code the original agent invented aren't required of reruns."""
+    from types import SimpleNamespace
+
+    outputs = {  # what `pytest -rA` prints in each state
+        "G": "PASSED tests/t.py::old_behaviour\nPASSED tests/t.py::iter_all_invoices_new",
+        "parent": "PASSED tests/t.py::old_behaviour\nFAILED tests/t.py::iter_all_invoices_new",
+    }
+
+    class FakeRP:
+        timeout = 10
+        sandbox = SimpleNamespace(exec=lambda d, cmd, timeout: SimpleNamespace(output=outputs[d]))
+
+        def build(self, state):
+            return "G" if state.step_ids else "parent"
+
+        def teardown(self, d):
+            pass
+
+    rc = _rc("abc")
+    rr = Reruns(FakeRP(), Agent("fake", "true", network="none"), suite_cmd="pytest -rA")
+    rr.prepare(rc)
+    assert rr._baseline == {"tests/t.py::old_behaviour"}
+    assert rr.excluded == ["tests/t.py::iter_all_invoices_new"]
