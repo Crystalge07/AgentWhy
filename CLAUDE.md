@@ -28,15 +28,16 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 
 Shared types live in `whyagent/types.py` (`Step`, `State`, `RunResult`, `RootCause`). Code against them.
 
-- **A: Entire + causal analysis:** `whyagent/entire.py`, `whyagent/adapters/`, `whyagent/bisect/`, `cli.py` stages 1–7, seeded demo repo + recorded sessions.
-- **B: Execution + agents:** `whyagent/replay/` (Docker sandbox, worker pool, cache), `whyagent/rerun/`, Vultr, Tiger Data, `cli.py` stages 0 and 8.
-- Contract: `bisect/` only touches code through `replay.run`.
+- **A — Find the cause (stages 1–6):** `whyagent/entire.py` (incl. Graph + Brain wrappers), `whyagent/adapters/`, `whyagent/bisect/`, `cli.py` stages 1–6 + report output, seeded demo repo, recording scenarios 1 and 3.
+- **B — Prove the fix (stages 0, 7, 8):** `whyagent/replay/` (Docker sandbox, worker pool, cache, flaky voting), `whyagent/rerun/` (Gemini lesson, rerun harness), Vultr, Tiger Data, Gemini setup, `cli.py` stages 0, 7, 8, recording scenario 2 + rerun dry runs.
+- Contracts: `bisect/` only touches code through `replay.run`; `rerun/` only touches Brain through `entire.brain_lookup` / `brain_save`; A hands B a `RootCause`.
+- Full split with hour estimates: the PRD's "Team split and 48-hour timeline".
 
 See the README's layout table for what's done vs TODO.
 
 ## Team and machines
 
-Team of four; Crystal (Mac) owns the repo. At least one teammate develops on **Windows**, so code must work on both:
+Team of two: Crystal (A, Mac) owns the repo; Anton (B) develops on **Windows**, so code must work on both:
 
 - Always decode subprocess output with `encoding="utf-8", errors="replace"`, never bare `text=True` (Windows defaults to cp1252 and crashes on Entire's `●`/`✓` output).
 - Don't hard-code `python3` (on Windows it's a Microsoft Store stub). Use `sys.executable` in tests.
