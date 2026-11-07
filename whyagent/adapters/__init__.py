@@ -5,13 +5,13 @@ from ..types import Step
 from .claude_code import parse_claude_code
 
 
-def parse(transcript: str, agent: str = "claude-code", session_id: str = "") -> list[Step]:
+def parse(transcript: str, agent: str = "claude-code", session_id: str = "", shell_out: list | None = None) -> list[Step]:
     if agent == "claude-code":
-        return parse_claude_code(transcript, session_id=session_id)
+        return parse_claude_code(transcript, session_id=session_id, shell_out=shell_out)
     raise NotImplementedError(f"no adapter for agent {agent!r}")
 
 
-def load_session(commit: str, cwd: str = ".") -> list[Step]:
+def load_session(commit: str, cwd: str = ".", shell_out: list | None = None) -> list[Step]:
     """Commit -> Steps via the Entire checkpoint trailer (all sessions, merged in order)."""
     import subprocess
 
@@ -26,7 +26,7 @@ def load_session(commit: str, cwd: str = ".") -> list[Step]:
         raw = subprocess.run(["entire", "checkpoint", "explain", cp, "--transcript", "--session-index", str(i)],
                              cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
         per_session.append(parse(raw, sess.get("agent", "claude-code").lower().replace(" ", "-"),
-                                 sess.get("session_id", "")))
+                                 sess.get("session_id", ""), shell_out=shell_out))
     return merge_sessions(per_session)
 
 
@@ -44,7 +44,7 @@ def load_replayable(commit: str, cwd: str = ".", is_test=None):
     import subprocess
 
     from ..replay import is_test_file
-    from .fidelity import reconcile, split_writes
+    from .fidelity import attribute_shell_edits, reconcile, split_writes
 
     is_test = is_test or is_test_file
 
@@ -55,8 +55,12 @@ def load_replayable(commit: str, cwd: str = ".", is_test=None):
     sha = git("rev-parse", commit)
     parent = git("rev-parse", f"{sha}^")  # None for a root commit
     changed = (git("diff", "--name-only", parent or "4b825dc642cb6eb9a060e54bf8d69288fbee4904", sha) or "").split()
-    steps = split_writes(load_session(sha, cwd), lambda f: _git_file(parent, f, cwd))
-    return reconcile(steps, lambda f: _git_file(parent, f, cwd), lambda f: _git_file(sha, f, cwd), changed, is_test)
+    shell: list[dict] = []
+    steps = split_writes(load_session(sha, cwd, shell_out=shell), lambda f: _git_file(parent, f, cwd))
+    steps, fid = reconcile(steps, lambda f: _git_file(parent, f, cwd), lambda f: _git_file(sha, f, cwd), changed,
+                           is_test)
+    attribute_shell_edits(steps, fid, shell)
+    return steps, fid
 
 
 def merge_sessions(per_session: list[list[Step]]) -> list[Step]:

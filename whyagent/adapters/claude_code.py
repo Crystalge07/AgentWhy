@@ -72,7 +72,10 @@ def _text_of(content) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
+def parse_claude_code(transcript: str, session_id: str = "", shell_out: list | None = None) -> list[Step]:
+    """Edits from Edit/MultiEdit/Write calls. If `shell_out` is given, every shell command that isn't
+    view-only is appended to it (with its context), so file changes made via `sed -i`, `git checkout --`
+    and the like can be attributed later (adapters.fidelity.attribute_shell_edits)."""
     steps: list[Step] = []
     prompt = ""
     reasoning: str | None = None
@@ -110,8 +113,10 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                         if text and not _HARNESS_DENIAL.search(text):
                             trigger = text
             else:
-                prompt = _prompt_text(content) or prompt
-                reasoning, trigger = None, None
+                text = _prompt_text(content)
+                if text and not text.startswith(("<local-command", "<command-")):  # /model etc. aren't prompts
+                    prompt = text
+                    reasoning, trigger = None, None
         elif rec.get("type") == "assistant" and isinstance(content, list):
             for c in content:
                 t = c.get("type")
@@ -121,8 +126,12 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                         reasoning = txt
                 elif t == "tool_use" and c.get("id"):
                     name = c.get("name", "")
-                    if name in TRIGGER_TOOLS and _is_view_only((c.get("input") or {}).get("command", "")):
+                    command = (c.get("input") or {}).get("command", "")
+                    if name in TRIGGER_TOOLS and _is_view_only(command):
                         name += ":view"  # e.g. `cat file`: reading code, not reacting to an error
+                    elif name in TRIGGER_TOOLS and shell_out is not None and c["id"] not in tool_names:
+                        shell_out.append({"session_id": session_id, "ts": ts, "command": command, "cwd": cwd,
+                                          "reasoning": reasoning, "trigger": trigger, "prompt": prompt})
                     tool_names.setdefault(c["id"], name)
                 if t == "tool_use" and c.get("name") in EDIT_TOOLS:
                     if c.get("id"):
