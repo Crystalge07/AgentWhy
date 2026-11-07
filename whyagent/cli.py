@@ -33,6 +33,25 @@ def _finish(report: Report, args, code: int) -> int:
     return code
 
 
+def cmd_chart(args) -> int:
+    from . import chart, tiger
+
+    conn = tiger.connect()
+    if conn is None:
+        print("chart: TIGER_DATABASE_URL isn't set")
+        return 2
+    with conn:
+        conn.execute(tiger.ANALYSES_DDL)
+        rows = chart.fetch(conn)
+    out = Path(args.report).with_name("chart.html")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(chart.render(rows))
+    print(f"chart: {len(rows)} analyses → {out}")
+    if args.open:
+        webbrowser.open(out.resolve().as_uri())
+    return 0
+
+
 def cmd_render(args) -> int:
     report = Report()
     report.clear()
@@ -137,7 +156,7 @@ def cmd_root_cause(args) -> int:
     sandbox = _make_sandbox(args, head)
     if sandbox is None:
         return 2
-    runlog = RunLog()
+    runlog = RunLog(label=f"{Path.cwd().name}: {test}")
     rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
         code = stages_7_8(rc, rp, args, report, runlog)
@@ -153,7 +172,7 @@ def cmd_analyze(args) -> int:
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line)
-    runlog = RunLog()
+    runlog = RunLog(label=f"{Path.cwd().name}: {args.test}")
 
     def run(rp, stage, state, n):
         rp.stage = stage
@@ -249,12 +268,15 @@ def main(argv=None) -> int:
     p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code"],
                    help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
+    p.add_argument("--chart", action="store_true", help="write the Tiger Data pruning chart (.whyagent/chart.html)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)
     if args.check_entire:
         return cmd_check_entire(args)
     if args.render:
         return cmd_render(args)
+    if args.chart:
+        return cmd_chart(args)
     if args.root_cause:
         return cmd_root_cause(args)
     if not (args.test and args.good):
