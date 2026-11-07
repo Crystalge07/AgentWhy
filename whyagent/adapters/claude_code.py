@@ -8,7 +8,35 @@ from pathlib import PurePosixPath, PureWindowsPath
 from ..types import Step
 
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
+# Output the agent can be *reacting to*: commands it ran. File reads, searches and edit confirmations
+# aren't triggers (any tool's error result still is).
+TRIGGER_TOOLS = {"Bash", "PowerShell", "BashOutput"}
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+# Shell commands that only look at things. Their output is a file read, not something to react to.
+_VIEWERS = {"cat", "head", "tail", "less", "more", "grep", "rg", "ls", "dir", "find", "tree", "wc", "od", "file",
+            "stat", "pwd", "cd", "echo", "printf", "type", "which", "where", "Get-Content", "Get-ChildItem",
+            "Select-String", "sort", "uniq", "cut", "awk", "nl", "true"}
+_GIT_VIEWERS = {"ls-files", "show", "log", "diff", "status", "blame", "grep", "ls-tree", "rev-parse", "branch",
+                "check-ignore", "cat-file"}
+
+
+def _is_view_only(command: str) -> bool:
+    """True if every part of a shell command (split on && || ; |) only views files or repo state."""
+    for part in re.split(r"&&|\|\||;|\||\n", command or ""):
+        words = [w for w in part.strip().split() if "=" not in w.split("/")[0]]  # skip VAR=x prefixes
+        if not words:
+            continue
+        cmd = words[0].rsplit("/", 1)[-1]
+        if cmd == "sed":
+            if "-n" not in words and not any(w.startswith("-n") for w in words[1:]):
+                return False
+        elif cmd == "git":
+            sub = next((w for w in words[1:] if not w.startswith("-")), "")
+            if sub not in _GIT_VIEWERS:
+                return False
+        elif cmd not in _VIEWERS and not cmd.startswith(("2>", ">", "<")):
+            return False
+    return True
 
 
 def _rel(path: str, cwd: str | None) -> str:
@@ -47,6 +75,7 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
     reasoning: str | None = None
     trigger: str | None = None
     seen: set[str] = set()  # Entire transcripts can repeat a tool_use record; apply each id once
+    tool_names: dict[str, str] = {}  # tool_use id -> tool name
     cwd: str | None = None
     ts = ""
 
@@ -70,7 +99,11 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
         content = msg.get("content")
         if rec.get("type") == "user":
             if isinstance(content, list) and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
-                trigger = _text_of(content) or trigger
+                for c in content:
+                    if not (isinstance(c, dict) and c.get("type") == "tool_result"):
+                        continue
+                    if tool_names.get(c.get("tool_use_id"), "") in TRIGGER_TOOLS or c.get("is_error"):
+                        trigger = _text_of(c.get("content")) or trigger
             else:
                 prompt = _prompt_text(content) or prompt
                 reasoning, trigger = None, None
@@ -81,7 +114,12 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                     txt = c.get("text") or c.get("thinking") or ""
                     if txt.strip():
                         reasoning = txt
-                elif t == "tool_use" and c.get("name") in EDIT_TOOLS:
+                elif t == "tool_use" and c.get("id"):
+                    name = c.get("name", "")
+                    if name in TRIGGER_TOOLS and _is_view_only((c.get("input") or {}).get("command", "")):
+                        name += ":view"  # e.g. `cat file`: reading code, not reacting to an error
+                    tool_names.setdefault(c["id"], name)
+                if t == "tool_use" and c.get("name") in EDIT_TOOLS:
                     if c.get("id"):
                         if c["id"] in seen:
                             continue

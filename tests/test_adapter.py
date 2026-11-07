@@ -48,3 +48,51 @@ def test_parse_real_transcript_shape():
     assert s.reasoning == "cert error, disabling verification to unblock"
     assert s.trigger == "SSLError: certificate verify failed"
     assert [s.id for s in steps] == [1, 2]
+
+
+def test_trigger_is_command_output_not_file_reads():
+    import json
+
+    def rec(kind, content):
+        return json.dumps({"type": kind, "message": {"content": content}})
+
+    lines = [
+        rec("user", "fix it"),
+        rec("assistant", [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "pytest"}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "b1", "content": "E   SSLError: certificate verify failed"}]),
+        rec("assistant", [{"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "a.py"}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "r1", "content": "1\tVERIFY = True"}]),
+        rec("assistant", [{"type": "tool_use", "id": "e1", "name": "Edit",
+                           "input": {"file_path": "a.py", "old_string": "True", "new_string": "False"}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "e1", "content": "updated successfully"}]),
+        rec("assistant", [{"type": "tool_use", "id": "g1", "name": "Grep", "input": {}}]),
+        rec("user", [{"type": "tool_result", "tool_use_id": "g1", "content": "boom", "is_error": True}]),
+        rec("assistant", [{"type": "tool_use", "id": "e2", "name": "Edit",
+                           "input": {"file_path": "a.py", "old_string": "False", "new_string": "None"}}]),
+    ]
+    s1, s2 = parse("\n".join(lines))
+    assert s1.trigger == "E   SSLError: certificate verify failed"  # the Read in between doesn't replace it
+    assert s2.trigger == "boom"                                     # but a tool error does
+
+
+def test_trigger_line_picks_the_error():
+    from whyagent.pipeline import trigger_line
+
+    out = "....F\n=========== FAILURES ===========\nE   AssertionError: assert 20 == 25\n1 failed in 0.3s\n"
+    assert trigger_line(out) == "E   AssertionError: assert 20 == 25"
+    ssl = "requests.exceptions.SSLError: certificate verify failed"
+    assert trigger_line(ssl + "\nexit 1") == ssl
+    assert trigger_line("collected 3 items\nall good") == "all good"
+    assert trigger_line(None) == ""
+
+
+def test_view_only_commands_are_not_triggers():
+    from whyagent.adapters.claude_code import _is_view_only
+
+    assert _is_view_only("git ls-files && cat config.py 2>/dev/null; grep -rn invoice --include=*.py . | head -50")
+    assert _is_view_only("cd /repo && cat scripts/smoke_dev.py README.md; sed -n 1,39p scripts/dev_server.py")
+    assert _is_view_only("git log --oneline -3 && git status --short")
+    assert not _is_view_only(".venv/Scripts/python -m pytest -q 2>&1 | tail -15")
+    assert not _is_view_only("cd /repo && python scripts/smoke_dev.py")
+    assert not _is_view_only("sed -i 's/a/b/' x.py")
+    assert not _is_view_only("git commit -am wip")

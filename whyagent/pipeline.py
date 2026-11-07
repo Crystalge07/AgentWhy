@@ -6,6 +6,7 @@ those facts with real test runs, through `Replayer.run` only (the A/B contract).
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Callable
@@ -26,6 +27,22 @@ class Options:
     scan: bool = False
     workers: int = 1         # >1 only pays off with B's parallel worker pool
     ddmin_cap: int = 20
+
+
+_EXC_LINE = re.compile(r"^E\s|\b\w*(Error|Exception)\b|^AssertionError|^assert ")
+_SIGNAL = re.compile(r"Traceback|FAILED|refused|denied|not found|No such|cannot|can't", re.I)
+_SUMMARY = re.compile(r"^=*\s*\d+ (failed|passed|errors?)\b|^=+ .* =+$|^short test summary")
+
+
+def trigger_line(trigger: str | None) -> str:
+    """The most telling line of a trigger: the last exception line, else another error-looking
+    line, else the last line. pytest's summary lines ("1 failed in 0.3s") never win."""
+    lines = [ln.strip() for ln in (trigger or "").splitlines() if ln.strip() and not _SUMMARY.match(ln.strip())]
+    for pat in (_EXC_LINE, _SIGNAL):
+        hits = [ln for ln in lines if pat.search(ln)]
+        if hits:
+            return hits[-1][:160]
+    return (lines[-1] if lines else "")[:160]
 
 
 def _show(repo: str, rev: str, path: str) -> str | None:
@@ -200,8 +217,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                             "extra_causes": extra, "file": s.file}
     line = next((d["line"] for d in report["session"]["steps"] if d["id"] == root), "?")
     say(f"root cause: edit #{root} {s.file}:{line}  {s.new_text.strip().splitlines()[0][:80] if s.new_text.strip() else '(deletion)'}")
-    if s.trigger:
-        say(f"trigger: {s.trigger.strip().splitlines()[-1][:160]}")
+    say(f"trigger: {trigger_line(s.trigger) or '(no command output right before this edit)'}")
     say(f"reasoning: {(s.reasoning or '(not recorded: hidden thinking)').strip()[:200]}")
     report["runs_total"] = rp.runs
     return rc
