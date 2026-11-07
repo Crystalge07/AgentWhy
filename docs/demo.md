@@ -138,3 +138,35 @@ with no model, use the stub agent (arm B's prompt contains "Lesson"):
 WHYAGENT_STUB_CMD='case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) <repeat the bad edit> ;; esac' \
   whyagent --root-cause .whyagent/root_cause.json --test "..." --lesson "..." --rerun-agent stub
 ```
+
+## Live loop (`--live`)
+
+Runs on the mock model (no Gemini, no network). The mock covers scenario 2b only. Run it from
+`payments-demo` on `scenario-2b-clean`, against the saved root cause:
+
+```sh
+WHYAGENT_MODEL=mock whyagent --live --yes \
+  --root-cause .whyagent/s2b/root_cause.json \
+  --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds" \
+  --instructions "$(mktemp -d)/AGENTS.md" \
+  --report .whyagent/live/report.html
+```
+
+**Rehearsals: use a throwaway instructions file.** `--instructions` takes any path, and the rerun agent
+still sees the rules as `AGENTS.md` (added after the repo's own `AGENTS.md`, if it has one). The real
+`AGENTS.md` stays clean, and each run starts with an empty file, so the rule is written every time
+instead of hitting the duplicate check ("already in …, not added again"). A fixed path such as
+`--instructions demo/AGENTS.demo.md` works too: delete the file before each run (`rm -f demo/AGENTS.demo.md`).
+Drop `--yes` to show the approval prompt live.
+
+Pass `--report` so the live run doesn't overwrite `.whyagent/report.html` from the full analysis.
+The HTML report doesn't show the live loop yet; it's in `report.json` under `live`.
+
+What's canned and what's real, so we can say it on stage:
+- **Canned:** the rule text and what the mock agent writes. Without the rule it repeats the recorded
+  `config.py` edit, except on run 2, where it adds constructor parameters (the good fix). With the rule in
+  `AGENTS.md` it always makes the good fix.
+- **Real:** the rewind (replayed session in a fresh worktree), every test run in the Docker sandbox, the
+  pass/fail evidence and diffs, the `AGENTS.md` write and duplicate check, and the before/after.
+- The 2b session was steered ("don't add constructor arguments, change the defaults in config.py"), and the
+  rerun prompt is that same instruction. A real agent would get a rule that contradicts its task; disclose this.

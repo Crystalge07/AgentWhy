@@ -11,6 +11,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -72,9 +73,12 @@ _NODE_LINES = [
 
 
 class GeminiCLI(Agent):
-    def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "0.67.0"):
-        settings = json.dumps({"model": {"maxSessionTurns": max_turns},
-                               "privacy": {"usageStatisticsEnabled": False}})
+    def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "0.67.0",
+                 context_file: str | None = None):
+        cfg = {"model": {"maxSessionTurns": max_turns}, "privacy": {"usageStatisticsEnabled": False}}
+        if context_file:  # read this instructions file (e.g. AGENTS.md) instead of GEMINI.md
+            cfg["context"] = {"fileName": [context_file]}
+        settings = json.dumps(cfg)
         model = model or os.environ.get("WHYAGENT_RERUN_MODEL")
         super().__init__(
             name="gemini-cli",
@@ -186,6 +190,14 @@ class RerunResult:
     detail: str
     duration_ms: int
     tokens: int | None = None
+    diff: str = ""        # what the agent changed (only with Reruns.capture_diff)
+    run_index: int | None = None
+
+
+def _git_in(d: str, *args: str) -> str:
+    import subprocess
+    return subprocess.run(["git", *args], cwd=d, capture_output=True, encoding="utf-8", errors="replace",
+                          check=True).stdout
 
 
 def _test_hashes(root: str, globs) -> dict[str, str]:
@@ -215,6 +227,7 @@ class Reruns:
         self._abort: str | None = None
         self._egress: Egress | None = None
         self.blocked: list[str] = []  # hosts the agent tried to reach outside its allowlist
+        self.capture_diff = False  # live loop: keep each run's diff (Stage 8 doesn't need it)
 
     def prepare(self, rc: RootCause):
         self._prepared = True
@@ -239,52 +252,80 @@ class Reruns:
         finally:
             self.rp.teardown(d)
 
-    def one(self, rc: RootCause, lesson: str | None, arm: str) -> RerunResult:
+    def one(self, rc: RootCause, lesson: str | None, arm: str, files: dict[str, str] | None = None,
+            run_index: int | None = None) -> RerunResult:
         if not self._prepared:
             self.prepare(rc)
         if self._abort:
-            return RerunResult(arm, OTHER, f"skipped: {self._abort}", 0)
-        t0 = time.time()
+            return RerunResult(arm, OTHER, f"skipped: {self._abort}", 0, run_index=run_index)
         try:
             d = self.rp.build(rc.before_state)
         except Exception as e:  # noqa: BLE001 — can't build the start state: not evidence either way
-            return RerunResult(arm, OTHER, f"couldn't build the start state: {e}", 0)
-        sb = self.rp.sandbox
+            return RerunResult(arm, OTHER, f"couldn't build the start state: {e}", 0, run_index=run_index)
         try:
-            before = _test_hashes(d, self.rp.test_globs)
-            ro = tuple(sorted({rel.split("/")[0] for rel in before if "/" in rel and (Path(d) / rel.split("/")[0]).is_dir()}))
-            env = {**self.agent.env, "WHYAGENT_PROMPT": task_prompt(rc, lesson)}
-            network = self.agent.network
-            if self._egress is not None:
-                env.update(self._egress.env)
-                network = self._egress.network
-            ex = sb.exec(d, self.agent.command, self.agent_timeout, env=env, network=network,
-                         image=self.image, readonly=ro)
-            tokens = self.agent.tokens(ex.output)
-            ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
-            err = None if ex.timed_out else self.agent.error(ex.output, ex.exit_code)
-            if err:
-                self._abort = err  # quota/auth problems won't fix themselves mid-analysis
-                return RerunResult(arm, OTHER, err, ms(), tokens)
-            note = "agent hit the time limit; " if ex.timed_out else ""
-            after = _test_hashes(d, self.rp.test_globs)
-            if after != before:
-                changed = sorted((set(before) ^ set(after)) | {k for k in before if k in after and after[k] != before[k]})
-                return RerunResult(arm, TAMPERED, note + "edited tests: " + ", ".join(changed[:5]), ms(), tokens)
-            for i in range(self.target_runs):
-                tgt = sb.exec(d, self.rp.test_cmd, self.rp.timeout)
-                if tgt.timed_out or tgt.exit_code != 0:
-                    runs = f" (run {i + 1} of {self.target_runs})" if self.target_runs > 1 else ""
-                    return RerunResult(arm, FAIL, note + "target test still fails" + runs, ms(), tokens)
-            if self._baseline:
-                lost = self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
-                if lost:  # timing-sensitive tests can flake under parallel load: only count tests lost twice
-                    lost &= self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
-                if lost:
-                    return RerunResult(arm, REGRESSED, note + "broke: " + ", ".join(sorted(lost)[:5]), ms(), tokens)
-            return RerunResult(arm, PASS, note + "target passes, no regressions, tests untouched", ms(), tokens)
+            return self.run_in(d, rc, lesson, arm, files, run_index)
         finally:
             self.rp.teardown(d)
+
+    def run_in(self, d: str, rc: RootCause, lesson: str | None, arm: str, files: dict[str, str] | None = None,
+               run_index: int | None = None) -> RerunResult:
+        """One rerun in an already-built start state `d` (the caller owns teardown). `files` (path -> text) are
+        written into the worktree before the agent starts, e.g. an AGENTS.md with a new rule."""
+        if not self._prepared:
+            self.prepare(rc)
+        if self._abort:
+            return RerunResult(arm, OTHER, f"skipped: {self._abort}", 0, run_index=run_index)
+        r = self._run_in(d, rc, lesson, arm, files, run_index)
+        r.run_index = run_index
+        return r
+
+    def _run_in(self, d, rc, lesson, arm, files, run_index) -> RerunResult:
+        t0 = time.time()
+        sb = self.rp.sandbox
+        for rel, text in (files or {}).items():
+            fp = Path(d) / rel
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_bytes(text.encode("utf-8"))
+        if self.capture_diff:
+            _git_in(d, "add", "-A")  # baseline: the start state, so the diff is only the agent's work
+        before = _test_hashes(d, self.rp.test_globs)
+        ro = tuple(sorted({rel.split("/")[0] for rel in before if "/" in rel and (Path(d) / rel.split("/")[0]).is_dir()}))
+        env = {**self.agent.env, "WHYAGENT_PROMPT": task_prompt(rc, lesson)}
+        if run_index is not None:
+            env["WHYAGENT_RUN_INDEX"] = str(run_index)
+        network = self.agent.network
+        if self._egress is not None:
+            env.update(self._egress.env)
+            network = self._egress.network
+        ex = sb.exec(d, self.agent.command, self.agent_timeout, env=env, network=network,
+                     image=self.image, readonly=ro)
+        tokens = self.agent.tokens(ex.output)
+        ms = lambda: int((time.time() - t0) * 1000)  # noqa: E731
+        err = None if ex.timed_out else self.agent.error(ex.output, ex.exit_code)
+        if err:
+            self._abort = err  # quota/auth problems won't fix themselves mid-analysis
+            return RerunResult(arm, OTHER, err, ms(), tokens)
+        note = "agent hit the time limit; " if ex.timed_out else ""
+        diff = ""
+        if self.capture_diff:
+            _git_in(d, "add", "-A", "-N")  # new files show up in the diff too
+            diff = _git_in(d, "diff", "--no-color", "--", ".", ":(exclude)**/__pycache__/**")
+        after = _test_hashes(d, self.rp.test_globs)
+        if after != before:
+            changed = sorted((set(before) ^ set(after)) | {k for k in before if k in after and after[k] != before[k]})
+            return RerunResult(arm, TAMPERED, note + "edited tests: " + ", ".join(changed[:5]), ms(), tokens, diff)
+        for i in range(self.target_runs):
+            tgt = sb.exec(d, self.rp.test_cmd, self.rp.timeout)
+            if tgt.timed_out or tgt.exit_code != 0:
+                runs = f" (run {i + 1} of {self.target_runs})" if self.target_runs > 1 else ""
+                return RerunResult(arm, FAIL, note + "target test still fails" + runs, ms(), tokens, diff)
+        if self._baseline:
+            lost = self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
+            if lost:  # timing-sensitive tests can flake under parallel load: only count tests lost twice
+                lost &= self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
+            if lost:
+                return RerunResult(arm, REGRESSED, note + "broke: " + ", ".join(sorted(lost)[:5]), ms(), tokens, diff)
+        return RerunResult(arm, PASS, note + "target passes, no regressions, tests untouched", ms(), tokens, diff)
 
     def run(self, rc: RootCause, lesson: str, n: int) -> tuple[list[RerunResult], list[RerunResult]]:
         """Both arms, interleaved so rate limits or drift hit both equally."""
@@ -309,9 +350,34 @@ class Reruns:
         return [r for r in results if r.arm == "A"], [r for r in results if r.arm == "B"]
 
 
-def agent_by_name(name: str) -> Agent:
+    def run_arm(self, rc: RootCause, lesson: str | None, n: int, arm: str,
+                files: dict[str, str] | None = None) -> list[RerunResult]:
+        """n reruns of one arm (live loop), in parallel, numbered 1..n via $WHYAGENT_RUN_INDEX."""
+        if not self._prepared:
+            self.prepare(rc)
+        with self.egress():
+            with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
+                return list(pool.map(lambda i: self.one(rc, lesson, arm, files, i), range(1, n + 1)))
+
+    @contextmanager
+    def egress(self):
+        """In Docker, agents with an allowlist reach only those hosts while inside this block."""
+        sb = self.rp.sandbox
+        if not (self.agent.allow and getattr(sb, "image", None) is not None):
+            yield
+            return
+        self._egress = Egress(sb.image, self.agent.allow).__enter__()
+        try:
+            yield
+        finally:
+            self._egress.__exit__(None, None, None)
+            self.blocked = self._egress.blocked
+            self._egress = None
+
+
+def agent_by_name(name: str, context_file: str | None = None) -> Agent:
     if name == "gemini-cli":
-        return GeminiCLI()
+        return GeminiCLI(context_file=context_file)
     if name == "claude-code":
         return ClaudeCode()
     if name == "stub":

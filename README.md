@@ -66,6 +66,10 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--render JSON` | Re-render a saved `report.json` to HTML |
 | `--chart` | Write the Tiger Data pruning chart (`.whyagent/chart.html`) |
 | `--check-entire` | Smoke-test the Entire connection |
+| `--live` | After the root cause, run the live loop instead of stages 7–8 (see below). Works after a full analysis or with `--root-cause` |
+| `--yes` | `--live`: approve the rule without asking (scripted demo runs) |
+| `--instructions PATH` | `--live`: the agent instructions file the rule is added to (default `AGENTS.md`) |
+| `--model gemini\|mock` | `--live`: who writes the rule and reruns the agent. Default `$WHYAGENT_MODEL`, else `gemini`. `mock` = canned responses for the seeded demo repo (scenario 2b), no network |
 
 ## How it works
 
@@ -81,12 +85,31 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | 7 Lesson | Brain first; otherwise Gemini writes a one-sentence lesson from the reasoning, trigger and diff (or `--lesson`) |
 | 8 Reruns | The agent redoes the task from just before the bad edit, with vs without the lesson; Fisher exact test; saved to Brain only if validated |
 
-Every test run is `PASS`, `TARGET_FAIL` (same signature as HEAD) or `OTHER` (never evidence). Test files are pinned to HEAD in every state, so an agent that edited a test can't hide the bug.
+### Live loop (`--live`)
+
+From a proven root cause to a rule the agent follows, in one command:
+
+```sh
+WHYAGENT_MODEL=mock whyagent --live --yes --root-cause .whyagent/s2b/root_cause.json \
+  --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
+```
+
+1. **Diagnose**: shows the culprit edit, checks the test still fails, then reruns the agent `--runs` times (default 5) from just before the edit with no rule, keeping each run's diff.
+2. **Rule**: compares runs that passed with runs that didn't (which files each changed, sample lines) and has the model phrase one rule. It stops if no run passed (no contrast) or every run passed (no rule needed).
+3. **Approve**: `[y]es / [n]o / [e]dit` (`$EDITOR` if set). On approval the rule is added to `--instructions` under `## Rules from whyagent` with a `<!-- whyagent: test=… session=… edit=#k -->` comment. A rule that's already there isn't added again.
+4. **Rewind**: rebuilds the state before the culprit edit (the commit's parent plus the session's earlier edits) in a throwaway git worktree, with the rules as `AGENTS.md` (Claude Code gets a `CLAUDE.md` that imports it). Entire's CLI can't restore a checkpoint, so this is the same replay the bisect uses. Your checkout is never touched.
+5. **Rerun**: the agent redoes the original task. The rule is only in `AGENTS.md`, not in the prompt.
+6. **Verify**: target test, regressions and test-file tampering, as a before/after table. A pass is labelled **rerun passed (unvalidated)**: one rerun isn't proof. Stage 8 is still the A/B test.
+
+Any failed stage prints `✗ live loop failed at <stage>: <why>` and exits 2 (1 if the rerun still fails). `--live` never reads or writes Brain, and turns off the Tiger run log, so it needs no network on the mock.
+
+ (same signature as HEAD) or `OTHER` (never evidence). Test files are pinned to HEAD in every state, so an agent that edited a test can't hide the bug.
 
 ## Status (2026-11-07)
 
 - **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 85 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
 - **Stages 7–8 are wired and unit-tested, but not yet run end to end with a real model.** Blocked on a Gemini key with quota or an Anthropic API key. `--lesson` lets Stage 8 run without Gemini; `--rerun-agent stub` rehearses it with no model at all.
+- **Live loop (`--live`) verified end to end on the mock** on scenario 2b in the Docker sandbox (~12 s). The mock only covers 2b; with Gemini it's untested (no key).
 - **Not tried yet:** Vultr VM, the worker pool with more than 2 workers on real sessions, the egress proxy outside the tests.
 - Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a local JSONL store (`~/.whyagent/brain.jsonl` or `WHYAGENT_BRAIN`) mirrored to a `lessons` table in Tiger Data, so validated lessons are shared across the team.
 - `whyagent --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
@@ -105,6 +128,8 @@ Every test run is `PASS`, `TARGET_FAIL` (same signature as HEAD) or `OTHER` (nev
 | `whyagent/tiger.py`, `chart.py` | B | Tiger Data run log + pruning chart |
 | `whyagent/rerun/` | B | Stage 7 Gemini lesson, Stage 8 rerun harness (Gemini CLI or Claude Code in Docker; tamper + regression checks), Fisher test + verdict |
 | `whyagent/report.py`, `report.html` | A | JSON + self-contained HTML report |
+| `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini or mock |
+| `whyagent/live/` | B | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |
 | `whyagent/cli.py` | A + B | Wires stages 0–8 |
 | `demo/check_seeded.py` | A | Checks the seeded demo repo can still produce each bug |
 
