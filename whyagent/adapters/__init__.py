@@ -12,14 +12,20 @@ def parse(transcript: str, agent: str = "claude-code", session_id: str = "") -> 
 
 
 def load_session(commit: str, cwd: str = ".") -> list[Step]:
-    """Commit -> Steps via the Entire checkpoint trailer.
+    """Commit -> Steps via the Entire checkpoint trailer (all sessions, merged in order)."""
+    import subprocess
 
-    TODO(Person 1, hour 0): confirm where Entire stores the full transcript
-    (`entire checkpoint explain <id> --json`) and plug it in here.
-    """
     from .. import entire
 
     cp = entire.checkpoint_id(commit, cwd)
     if cp is None:
         raise LookupError(f"{commit} has no Entire checkpoint trailer (human commit)")
-    raise NotImplementedError(f"transcript fetch for checkpoint {cp} not wired yet")
+    meta = entire.explain(cp, cwd) or {}
+    steps: list[Step] = []
+    for i, sess in enumerate(meta.get("sessions", [])):
+        raw = subprocess.run(["entire", "checkpoint", "explain", cp, "--transcript", "--session-index", str(i)],
+                             cwd=cwd, capture_output=True, text=True, check=True).stdout
+        for s in parse(raw, sess.get("agent", "claude-code").lower().replace(" ", "-"), sess.get("session_id", "")):
+            s.id = len(steps) + 1
+            steps.append(s)
+    return steps
