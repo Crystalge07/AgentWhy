@@ -35,7 +35,7 @@ SCENARIOS = [
     ("scenario-3-haiku", "87dc38e", "tests/test_settlement.py::test_invoice_paid_after_charge_settles", True),
 ]
 SECRET_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{30,}|sk-ant-[0-9A-Za-z_\-]{20,}"
-                       r"|postgres(ql)?://[^:\s/]+:[^@\s]+@")
+                       r"|postgres(ql)?://[^:\s/<]+:[^@\s<]+@")  # `<pw>` placeholders in docs aren't secrets
 
 results: list[tuple[str, str, str, str]] = []
 
@@ -227,53 +227,45 @@ def scenarios(demo: Path, quick: bool):
 
 
 def pipeline_e2e(demo: Path, quick: bool):
-    """Full stages 0-6 on scenario 2b (stable, ~15 s), then Stage 8 with a stub agent (no API)."""
+    """The real CLI on scenario 2b: stages 0-6 (~15 s), then Stage 8 with the stub agent (no API, ~20 s)."""
     if quick:
         mark("e2e", "stages 0-6 on scenario-2b-clean", "SKIP", "--quick")
-        mark("e2e", "stage 8 harness (stub agent)", "SKIP", "--quick")
+        mark("e2e", "stage 8 via --rerun-agent stub", "SKIP", "--quick")
         return
     branch, good, test, _ = SCENARIOS[1]
     out_dir = Path(tempfile.mkdtemp(prefix="whyagent-preflight-"))
     wt = out_dir / "demo"
+    # arm A (no lesson) repeats the agent's global config change; arm B (lesson in its prompt) leaves config alone
+    stub = ('case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) sed -i "s/^TIMEOUT_S = 10$/TIMEOUT_S = 2/; '
+            's/^MAX_RETRIES = 3$/MAX_RETRIES = 1/" payments/config.py ;; esac')
     try:
         sh(["git", "worktree", "add", "--detach", str(wt), branch], cwd=demo)
-        env = {**os.environ, "TIGER_DATABASE_URL": "", "WHYAGENT_BRAIN": str(out_dir / "brain.jsonl")}
+        env = {**os.environ, "TIGER_DATABASE_URL": "", "WHYAGENT_BRAIN": str(out_dir / "brain.jsonl"),
+               "WHYAGENT_STUB_CMD": stub}
+        t = time.time()
+        p = subprocess.run([sys.executable, "-m", "whyagent.cli", "--good", good, "--test", f"{PY} {test}",
+                            "--lesson", "preflight", "--rerun-agent", "stub", "--report", str(out_dir / "report.html")],
+                           cwd=wt, env=env, capture_output=True, timeout=900, **_ENC)
+        out = p.stdout + p.stderr
+        last = (out.strip().splitlines() or ["(no output)"])[-1]
 
         def stages():
-            t = time.time()
-            p = subprocess.run([sys.executable, "-m", "whyagent.cli", "--good", good, "--test", f"{PY} {test}",
-                                "--lesson", "preflight", "--no-rerun", "--report", str(out_dir / "report.html")],
-                               cwd=wt, env=env, capture_output=True, timeout=600, **_ENC)
-            out = p.stdout + p.stderr
             m = re.search(r"root cause: edit #(\d+) (\S+)", out)
-            if p.returncode != 0 or not m:
-                return "FAIL", f"exit {p.returncode}: " + (out.strip().splitlines() or ["(no output)"])[-1]
+            if not m:
+                return "FAIL", f"exit {p.returncode}: {last}"
             if not m.group(2).startswith("payments/config.py"):
                 return "FAIL", f"blamed {m.group(2)}, expected payments/config.py"
             runs = re.search(r"test runs used: (\d+)", out)
-            return f"edit #{m.group(1)} {m.group(2)} in {runs.group(1) if runs else '?'} runs, {time.time() - t:.0f}s"
-        ok = check("e2e", "stages 0-6 on scenario-2b-clean", stages) == "PASS"
+            return f"edit #{m.group(1)} {m.group(2)} in {runs.group(1) if runs else '?'} test runs"
+        check("e2e", "stages 0-6 on scenario-2b-clean", stages)
 
-        def stub_reruns():
-            import json
-
-            from whyagent.replay import DockerSandbox, Replayer
-            from whyagent.rerun import Agent, Reruns, decide
-            from whyagent.types import RootCause
-            rc = RootCause.from_dict(json.loads((out_dir / "root_cause.json").read_text(**_ENC)))
-            sb = DockerSandbox(str(wt), rc.head_state.base_commit, quiet=True)
-            rp = Replayer(str(wt), rc.edits_before + [rc.step], f"{PY} {test}", sandbox=sb, workers=2)
-            # arm A repeats the bad global change; arm B (lesson in its prompt) leaves config alone
-            cmd = ('case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) sed -i "s/^TIMEOUT_S = 10$/TIMEOUT_S = 2/; '
-                   's/^MAX_RETRIES = 3$/MAX_RETRIES = 1/" payments/config.py ;; esac')
-            a, b = Reruns(rp, Agent("stub", cmd, network="none"), workers=2).run(rc, "stub lesson", 5)
-            ap, bp = sum(r.outcome == "PASS" for r in a), sum(r.outcome == "PASS" for r in b)
-            verdict, p = decide(ap, len(a), bp, len(b))
-            return ("PASS" if verdict == "VALIDATED" else "FAIL"), f"A {ap}/5 · B {bp}/5 · p={p:.3f} → {verdict}"
-        if ok:
-            check("e2e", "stage 8 harness (stub agent)", stub_reruns)
-        else:
-            mark("e2e", "stage 8 harness (stub agent)", "SKIP", "stages 0-6 failed")
+        def reruns():
+            m = re.search(r"rerun: without lesson .*", out)
+            if not m:
+                return "FAIL", f"exit {p.returncode}: {last}"
+            return ("PASS" if "VALIDATED" in m.group(0) and p.returncode == 0 else "FAIL"), \
+                m.group(0).replace("rerun: ", "") + f" ({time.time() - t:.0f}s total)"
+        check("e2e", "stage 8 via --rerun-agent stub", reruns)
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=demo, capture_output=True)
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -285,16 +277,10 @@ def seeded(demo: Path, run: bool):
         return
 
     def go():
-        d = Path(tempfile.mkdtemp(prefix="whyagent-seed-"))
-        try:
-            archive = subprocess.run(["git", "archive", "--format=tar", "main"], cwd=demo, capture_output=True, check=True).stdout
-            subprocess.run(["tar", "-x", "-C", str(d)], input=archive, check=True)
-            p = subprocess.run([sys.executable, str(ROOT / "demo" / "check_seeded.py"), str(d), "--flaky-runs", "20"],
-                               capture_output=True, timeout=900, **_ENC)
-            bad = [ln for ln in p.stdout.splitlines() if ln.startswith("✗")]
-            return ("PASS", "baseline + 4 planted bugs behave") if p.returncode == 0 else ("FAIL", "; ".join(bad)[:200])
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
+        p = subprocess.run([sys.executable, str(ROOT / "demo" / "check_seeded.py"), str(demo), "--ref", "main",
+                            "--flaky-runs", "20"], capture_output=True, timeout=900, **_ENC)
+        bad = [ln for ln in p.stdout.splitlines() if ln.startswith("✗")] or p.stderr.strip().splitlines()[-1:]
+        return ("PASS", "baseline + 4 planted bugs behave") if p.returncode == 0 else ("FAIL", "; ".join(bad)[:200])
     check("seeded", "check_seeded on payments-demo main", go)
 
 

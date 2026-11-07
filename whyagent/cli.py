@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import webbrowser
@@ -128,6 +129,10 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"lesson: Brain lookup failed ({e}), writing a new one")
     if getattr(args, "lesson", None):
         lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip Gemini
+    if not lesson and not os.environ.get("GEMINI_API_KEY"):
+        print("lesson: skipped, GEMINI_API_KEY isn't set (pass --lesson TEXT to test a lesson without Gemini)")
+        report.note("Lesson skipped: no GEMINI_API_KEY and no --lesson.")
+        return 0 if args.no_rerun else 1
     if not lesson:
         try:
             lesson = make_lesson(rc)
@@ -146,8 +151,19 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     if args.sandbox != "docker":
         report.note("Reruns ran without Docker: the agent had full access to the host.")
     agent = agent_by_name(args.rerun_agent)
-    print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time…")
-    rr = Reruns(rp, agent, workers=args.workers, runlog=runlog)
+    missing = agent.missing_auth()
+    if missing:
+        print(f"rerun: skipped, {missing}")
+        report.note(f"Reruns skipped: {missing}.")
+        report["rerun"] = {"agent": agent.name, "a": [], "b": [], "p": None, "verdict": "INCONCLUSIVE",
+                           "saved_to_brain": False}
+        return 1
+    target_runs = max(1, getattr(args, "target_runs", None) or 1)
+    print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time"
+          + (f", target test {target_runs}× per rerun (flaky)" if target_runs > 1 else "") + "…")
+    if args.runs < 4:
+        print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
+    rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
     a_all, b_all = rr.run(rc, lesson, args.runs)
     if rr.excluded:
         print(f"rerun: {len(rr.excluded)} test(s) added by the session aren't required of reruns")
@@ -216,19 +232,46 @@ def cmd_root_cause(args) -> int:
     rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
         code = stages_7_8(rc, rp, args, report, runlog)
+    except Exception as e:  # noqa: BLE001 — write the report anyway
+        code = _crashed(report, e)
     finally:
         runlog.close()
     return _finish(report, args, code)
 
 
+def _crashed(report: Report, e: Exception) -> int:
+    """An unexpected error mid-analysis: say so, and let the caller still write the report."""
+    msg = (str(e).strip().splitlines() or [""])[0][:300]
+    print(f"error: {type(e).__name__}: {msg} (the report keeps everything found so far)")
+    if os.environ.get("WHYAGENT_DEBUG"):
+        import traceback
+        traceback.print_exc()
+    report.note(f"Analysis stopped by an error: {type(e).__name__}: {msg}")
+    return 2
+
+
 def cmd_analyze(args) -> int:
-    from .replay import Replayer, is_test_file, vote
     from .tiger import RunLog
 
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line)
     runlog = RunLog(label=f"{Path.cwd().name}: {args.test}")
+    try:
+        return _analyze(args, head, good, report, runlog)
+    except Exception as e:  # noqa: BLE001 — an error in any stage still writes the report
+        return _finish(report, args, _crashed(report, e))
+    finally:
+        runlog.close()
+
+
+# pytest: 4 = usage error (e.g. a test id that doesn't exist), 5 = no tests collected
+_NOT_A_TEST_RUN = {4: "pytest usage error: is the test id right?", 5: "pytest collected no tests: is the test id right?"}
+
+
+def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
+    from .bisect import prefix_bisect
+    from .replay import Replayer, is_test_file, vote
 
     def run(rp, stage, state, n):
         rp.stage = stage
@@ -251,6 +294,12 @@ def cmd_analyze(args) -> int:
     head_res, good_res = rp.run_many([State(head, [], head), State(good, [], head)], N)
     report.log_runs("precheck", state_label(State(head, [], head)), head_res)
     report.log_runs("precheck", state_label(State(good, [], head)), good_res)
+    bad_cmd = next((r.exit_code for r in head_res + good_res if r.exit_code in _NOT_A_TEST_RUN), None) \
+        if "pytest" in args.test else None
+    if bad_cmd is not None:
+        print(f"precheck: {_NOT_A_TEST_RUN[bad_cmd]} (exit {bad_cmd}) → abort")
+        report.note(f"Aborted: {_NOT_A_TEST_RUN[bad_cmd]} (pytest exit {bad_cmd}).")
+        return _finish(report, args, 2)
     g_pass = sum(r.outcome == PASS for r in good_res)
     h_fail = sum(r.outcome != PASS for r in head_res)
     mode = "stable" if h_fail == N else "flaky"
@@ -319,14 +368,14 @@ def cmd_analyze(args) -> int:
             print("commit: every commit since --good only touches tests → nothing to blame")
             report.note("Every commit between --good and HEAD only changes test files, which are pinned to HEAD.")
             return _finish(report, args, 2)
-        lo, hi = -1, len(commits) - 1  # index -1 == good
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            if outcome(rp, "commit", State(commits[mid], [], head), n) == PASS:
-                lo = mid
-            else:
-                hi = mid
-        guilty = commits[hi]
+        # Same search as the edit-level bisect: a commit that crashes or fails differently (OTHER) is
+        # never evidence, so the nearest other commit is tried instead.
+        k = prefix_bisect(commits, lambda prefix: outcome(rp, "commit", State(prefix[-1], [], head), n))
+        if k is None:
+            print("commit: bisect inconclusive (the commits around the boundary crash or fail differently)")
+            report.note("Commit bisect inconclusive: every commit around the boundary was OTHER.")
+            return _finish(report, args, 2)
+        guilty = commits[k - 1]
         print(f"commit: bisected → {guilty[:7]}")
 
     cp = entire.checkpoint_id(guilty)
@@ -350,6 +399,7 @@ def cmd_analyze(args) -> int:
         report.note(f"Couldn't load the Entire session for checkpoint {cp}: {e}")
         return _finish(report, args, 2)
     parent = _git("rev-parse", f"{guilty}^")
+    args.target_runs = args.target_runs or n  # flaky: a rerun's fix must survive as many runs as any state
     opts = Options(line=args.line, n=n, prune=not args.no_prune, scan=args.scan, workers=args.workers)
     # one replayer for stages 2-8: it knows the session's edits, and its cache carries over to reruns
     rp2 = Replayer(".", steps, args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
@@ -384,9 +434,12 @@ def main(argv=None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
-    from dotenv import load_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
-    load_dotenv()  # reads .env (gitignored) into the environment
+    # .env (gitignored): the analyzed repo's or a parent's first, then the one next to this install
+    # (an editable install in a clone of whyagent). Neither overrides variables already set.
+    load_dotenv(find_dotenv(usecwd=True))
+    load_dotenv()
     p = argparse.ArgumentParser(prog="whyagent", description="Find which agent decision broke a test, and prove it.")
     p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
     p.add_argument("--good", help="commit where the test passes")
@@ -402,8 +455,11 @@ def main(argv=None) -> int:
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
-    p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code"],
-                   help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
+    p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code", "stub"],
+                   help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY; "
+                        "stub runs $WHYAGENT_STUB_CMD, no model, for rehearsing Stage 8)")
+    p.add_argument("--target-runs", type=int, help="runs of the target test per rerun (default: the precheck's runs "
+                                                    "per state, so flaky bugs need to stay fixed; 1 with --root-cause)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
     p.add_argument("--chart", action="store_true", help="write the Tiger Data pruning chart (.whyagent/chart.html)")
     p.add_argument("--trail", action="store_true",

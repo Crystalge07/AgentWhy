@@ -133,3 +133,14 @@ def test_scan_finds_every_boundary_when_the_test_flips():
     out = {1: PASS, 2: TARGET_FAIL, 3: TARGET_FAIL, 4: PASS, 5: PASS, 6: TARGET_FAIL, 7: OTHER, 8: TARGET_FAIL}
     r = scan(order, sequential(lambda ids: out[len(ids)]))
     assert r["boundaries"] == [2, 6] and r["first"] == 2 and r["flips"]
+
+
+def test_commit_bisect_skips_other_commits():
+    """cli uses prefix_bisect over commits: a crashing commit (OTHER) is never blamed."""
+    commits = ["c1", "c2", "c3", "c4", "c5"]
+    outcome = {"c1": PASS, "c2": OTHER, "c3": PASS, "c4": TARGET_FAIL, "c5": TARGET_FAIL}
+    k = prefix_bisect(commits, lambda prefix: outcome[prefix[-1]])
+    assert commits[k - 1] == "c4"
+    # right at the boundary, an OTHER commit could be the guilty one: inconclusive, not a guess
+    outcome.update(c3=OTHER, c2=PASS)
+    assert prefix_bisect(commits, lambda prefix: outcome[prefix[-1]]) is None

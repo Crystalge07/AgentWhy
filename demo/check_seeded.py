@@ -4,7 +4,10 @@ Plants a hand-written version of each scenario's mistake in a throwaway copy of 
 checks that it fails the target test in the way the demo needs. The seeded repo itself never
 contains these patches, so recorded agents can't see them.
 
-    python demo/check_seeded.py ../payments-demo [--flaky-runs 30]
+    python demo/check_seeded.py ../payments-demo [--ref main] [--flaky-runs 30]
+
+It checks a clean snapshot of --ref (default main), whatever branch payments-demo has checked out.
+`--ref WORKTREE` checks the checked-out files instead.
 """
 from __future__ import annotations
 
@@ -120,9 +123,29 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("repo")
     ap.add_argument("--flaky-runs", type=int, default=30)
+    ap.add_argument("--ref", default="main", help="commit/branch to check (default main); WORKTREE = checked-out files")
     args = ap.parse_args()
     repo = Path(args.repo).resolve()
     py = venv_python(repo)
+    snapshot = None
+    if args.ref != "WORKTREE" and (repo / ".git").exists():
+        # A scenario branch has the agent's changes (and its bug) checked out; plant into the clean seed instead.
+        snapshot = Path(tempfile.mkdtemp(prefix="seeded-ref-"))
+        archive = subprocess.run(["git", "archive", "--format=tar", args.ref], cwd=repo, capture_output=True, check=True).stdout
+        subprocess.run(["tar", "-x", "-C", str(snapshot)], input=archive, check=True)
+        print(f"checking {args.ref} ({subprocess.run(['git', 'rev-parse', '--short', args.ref], cwd=repo, capture_output=True, **_ENC).stdout.strip()})")
+        repo = snapshot
+    try:
+        return _check(repo, py, args)
+    finally:
+        if snapshot:
+            shutil.rmtree(snapshot, ignore_errors=True)
+
+
+_ENC = {"encoding": "utf-8", "errors": "replace"}
+
+
+def _check(repo: Path, py: str, args) -> int:
     ok_all = True
 
     base = copy_repo(repo)

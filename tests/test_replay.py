@@ -182,3 +182,21 @@ def test_rate_lower_bound_is_conservative():
     assert rate_lower_bound(6, 15) < 0.3 < 6 / 15             # a lucky 40% precheck can't talk us down to 6 runs
     assert flaky_runs(rate_lower_bound(6, 15)) >= 10
     assert rate_lower_bound(15, 15) > 0.85 and rate_lower_bound(0, 15) == 0
+
+
+def test_unbuildable_state_is_other_and_cleans_up(tmp_path):
+    """An edit that no longer applies (others left out) is OTHER, not a crash, and leaves no worktree behind."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_text("OK = True\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "OK = True", "OK = 1"),
+             Step(2, "s", "claude-code", "app.py", "edit", "OK = 1", "OK = 2")]
+    rp = Replayer(str(tmp_path), steps, f'"{sys.executable}" -c "pass"')
+    res = rp.run(State(base, [2], base), 2)
+    assert [r.outcome for r in res] == ["OTHER", "OTHER"] and "old_text not found" in res[0].output
+    assert rp.runs == 0
+    assert len(git(tmp_path, "worktree", "list").splitlines()) == 1

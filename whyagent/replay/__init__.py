@@ -66,6 +66,13 @@ class Replayer:
 
     def build(self, state: State) -> str:
         d = tempfile.mkdtemp(prefix="whyagent-")
+        try:
+            return self._build(state, d)
+        except BaseException:
+            self.teardown(d)
+            raise
+
+    def _build(self, state: State, d: str) -> str:
         with self._git_lock:
             # byte-exact checkout: agent edits use LF, so a CRLF checkout (autocrlf=true) would break them
             _git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", d,
@@ -127,7 +134,19 @@ class Replayer:
             return res
         self._log(k, hit, cached=True)
         new: list[RunResult] = []
-        d = self.build(state)
+        try:
+            d = self.build(state)
+        except (ValueError, subprocess.CalledProcessError, OSError) as e:
+            # The state can't be built (an edit no longer applies once others are left out, say). That's
+            # not evidence either way: OTHER, cached, so search code skips it like a crashing state.
+            err = getattr(e, "stderr", None) or str(e)
+            err = err.decode("utf-8", "replace") if isinstance(err, bytes) else err
+            res = hit + [RunResult(OTHER, "build-failed", -1, 0, output=f"couldn't build state: {err}"[-4000:])
+                         for _ in range(n - len(hit))]
+            with self._lock:
+                self.cache[k] = res
+            self._log(k, res[len(hit):])
+            return res
         try:
             for _ in range(n - len(hit)):
                 new.append(self._once(d))

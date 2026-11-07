@@ -8,7 +8,11 @@ Before recording, check that the repo can still produce all three bugs:
 
 ```sh
 .venv/bin/python demo/check_seeded.py ../payments-demo     # Windows: .venv\Scripts\python
+.venv/bin/python demo/preflight.py                         # everything else; run before every demo
 ```
+
+`check_seeded.py` checks a clean snapshot of `main` (`--ref f39623e` for scenario 2b's base), whatever
+branch is checked out. `preflight.py` marks Gemini, Claude and Vultr checks SKIP while we lack access.
 
 It plants a hand-written version of each mistake in a throwaway copy and checks the failure
 (last verified 2026-11-07: baseline 5/5 pass, scenario 1 and 2 fail 3/3, scenario 3 fails 14/30).
@@ -97,7 +101,9 @@ the exact shell command, with test runs as proof.
 **Disclose the steering in 2b.** The bad edit came right after a user prompt telling the agent to
 change the config defaults; the transcript records it and the report shows it as the task prompt.
 For the same reason, **don't use 2b for the rerun demo**: Stage 8 reruns start from that prompt, so
-the lesson would be arguing with an explicit user instruction. Use scenario 1 (or 3) for reruns.
+the lesson would be arguing with an explicit user instruction. **Use scenario 1 for reruns.** Scenario 3 works
+only with `--target-runs` around 10 (the full analysis sets it from the precheck): a flaky bug passes a
+single run most of the time, so arm A would look fine.
 
 **Verified on macOS, Docker sandbox (2026-11-07):** scenario 1 with `--line` 5 runs, without 4 runs
 (4 of 7 edits pruned); 2b 6 runs; 3 flaky, 19–44 runs. Same root causes as on Windows. With the old
@@ -120,5 +126,15 @@ Stages 7–8 alone, from a saved root cause, with a hand-written lesson (no Gemi
 
 ```sh
 whyagent --root-cause .whyagent/root_cause.json --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice" \
-  --lesson "..." --rerun-agent claude-code --runs 2
+  --lesson "..." --rerun-agent claude-code --runs 5
+```
+
+`--runs 5` is the minimum worth showing: with 2 or 3 runs per arm the Fisher test can't reach p < 0.05,
+so nothing can be VALIDATED. Ten agent runs can take up to ~25 min on 2 workers, so **record Stage 8
+before the demo** and show it with `whyagent --render .whyagent/report.json`. To rehearse the plumbing
+with no model, use the stub agent (arm B's prompt contains "Lesson"):
+
+```sh
+WHYAGENT_STUB_CMD='case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) <repeat the bad edit> ;; esac' \
+  whyagent --root-cause .whyagent/root_cause.json --test "..." --lesson "..." --rerun-agent stub
 ```

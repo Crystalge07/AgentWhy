@@ -41,6 +41,10 @@ class Agent:
     def tokens(self, output: str) -> int | None:
         return None
 
+    def missing_auth(self) -> str | None:
+        """Why this agent can't run at all (no API key), checked before building its image. None = fine."""
+        return None
+
     def error(self, output: str, exit_code: int) -> str | None:
         """Infra failure (auth, quota, crash before doing anything): the run is OTHER, not evidence."""
         return f"agent exited {exit_code} with no output" if exit_code != 0 and not output.strip() else None
@@ -83,6 +87,10 @@ class GeminiCLI(Agent):
             allow=["generativelanguage.googleapis.com"],
         )
 
+    def missing_auth(self) -> str | None:
+        return None if os.environ.get("GEMINI_API_KEY") else \
+            "GEMINI_API_KEY isn't set (use --rerun-agent claude-code or stub, or --no-rerun)"
+
     def error(self, output: str, exit_code: int) -> str | None:
         err = (_json_tail(output) or {}).get("error")
         if err:
@@ -123,6 +131,10 @@ class ClaudeCode(Agent):
             allow=["api.anthropic.com"],
         )
 
+    def missing_auth(self) -> str | None:
+        return None if any(os.environ.get(k) for k in _CLAUDE_AUTH) else \
+            "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) for claude-code reruns"
+
     def error(self, output: str, exit_code: int) -> str | None:
         data = _json_tail(output)
         if data and data.get("is_error") and not str(data.get("subtype", "")).startswith("error_max_turns"):
@@ -137,6 +149,16 @@ class ClaudeCode(Agent):
         total = sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
                                                    "cache_read_input_tokens"))
         return total or None
+
+
+class Stub(Agent):
+    """No model: runs $WHYAGENT_STUB_CMD (default: do nothing) in the sandbox, network off. For rehearsing
+    Stage 8 without API access. The command sees $WHYAGENT_PROMPT, which contains "Lesson" only in arm B,
+    e.g. `case "$WHYAGENT_PROMPT" in *Lesson*) <good fix> ;; *) <the original mistake> ;; esac`."""
+
+    def __init__(self, command: str | None = None):
+        super().__init__(name="stub", command=command or os.environ.get("WHYAGENT_STUB_CMD") or "true",
+                         network="none")
 
 
 # ---------------------------------------------------------------- prompt
@@ -182,8 +204,9 @@ def passed_tests(output: str) -> set[str]:
 
 class Reruns:
     def __init__(self, rp: Replayer, agent: Agent, suite_cmd: str | None = "pytest -q -rA --tb=no",
-                 agent_timeout: int = 300, workers: int = 2, runlog=None):
+                 agent_timeout: int = 300, workers: int = 2, runlog=None, target_runs: int = 1):
         self.rp, self.agent, self.suite_cmd = rp, agent, suite_cmd
+        self.target_runs = max(1, target_runs)  # flaky bugs: the fix must pass every one of these runs
         self.agent_timeout, self.workers, self.runlog = agent_timeout, workers, runlog
         self.image = None
         self._baseline: set[str] | None = None
@@ -222,7 +245,10 @@ class Reruns:
         if self._abort:
             return RerunResult(arm, OTHER, f"skipped: {self._abort}", 0)
         t0 = time.time()
-        d = self.rp.build(rc.before_state)
+        try:
+            d = self.rp.build(rc.before_state)
+        except Exception as e:  # noqa: BLE001 — can't build the start state: not evidence either way
+            return RerunResult(arm, OTHER, f"couldn't build the start state: {e}", 0)
         sb = self.rp.sandbox
         try:
             before = _test_hashes(d, self.rp.test_globs)
@@ -245,11 +271,15 @@ class Reruns:
             if after != before:
                 changed = sorted((set(before) ^ set(after)) | {k for k in before if k in after and after[k] != before[k]})
                 return RerunResult(arm, TAMPERED, note + "edited tests: " + ", ".join(changed[:5]), ms(), tokens)
-            tgt = sb.exec(d, self.rp.test_cmd, self.rp.timeout)
-            if tgt.timed_out or tgt.exit_code != 0:
-                return RerunResult(arm, FAIL, note + "target test still fails", ms(), tokens)
+            for i in range(self.target_runs):
+                tgt = sb.exec(d, self.rp.test_cmd, self.rp.timeout)
+                if tgt.timed_out or tgt.exit_code != 0:
+                    runs = f" (run {i + 1} of {self.target_runs})" if self.target_runs > 1 else ""
+                    return RerunResult(arm, FAIL, note + "target test still fails" + runs, ms(), tokens)
             if self._baseline:
                 lost = self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
+                if lost:  # timing-sensitive tests can flake under parallel load: only count tests lost twice
+                    lost &= self._baseline - passed_tests(sb.exec(d, self.suite_cmd, self.rp.timeout).output)
                 if lost:
                     return RerunResult(arm, REGRESSED, note + "broke: " + ", ".join(sorted(lost)[:5]), ms(), tokens)
             return RerunResult(arm, PASS, note + "target passes, no regressions, tests untouched", ms(), tokens)
@@ -284,4 +314,6 @@ def agent_by_name(name: str) -> Agent:
         return GeminiCLI()
     if name == "claude-code":
         return ClaudeCode()
-    raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code)")
+    if name == "stub":
+        return Stub()
+    raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code, stub)")
