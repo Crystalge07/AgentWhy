@@ -20,10 +20,12 @@ whyagent --test "pytest tests/test_auth.py::test_login" --good a1b2c3d --line sr
 
 | Module | Owner | Status |
 | --- | --- | --- |
-| `whyagent/types.py` | shared | Step / State / RunResult |
-| `whyagent/entire.py` | shared | Entire CLI wrapper + connection check |
-| `whyagent/adapters/` | Person 1 | Claude Code JSONL parser done; Entire transcript fetch TODO |
-| `whyagent/replay/` | Person 2 | git-worktree build, pinned tests, signatures, cache (local, Docker TODO) |
-| `whyagent/bisect/` | Person 3 | deps, prefix bisect, confirm, ddmin (Graph pruning TODO) |
-| `whyagent/rerun/` | Person 4 | Fisher test + verdict done; Gemini lesson + reruns TODO |
-| `whyagent/cli.py` | Person 4 | Stages 0–1 wired; 2–8 TODO |
+| `whyagent/types.py` | shared | Step / State / RunResult (+ RootCause TODO) |
+| `whyagent/entire.py` | A | Entire CLI wrapper + connection check; Graph/Brain TODO |
+| `whyagent/adapters/` | A | Claude Code JSONL parser + Entire checkpoint load done; session merge, replay fidelity TODO |
+| `whyagent/bisect/` | A | deps, prefix bisect, confirm, ddmin done; Stage 3 hint, Graph pruning TODO |
+| `whyagent/replay/` | B | git-worktree build, pinned tests, signatures, cache (local); Docker, worker pool, Tiger logging TODO |
+| `whyagent/rerun/` | B | Fisher test + verdict done; Gemini lesson + reruns TODO |
+| `whyagent/cli.py` | A: stages 1–7, B: stages 0, 8 | Stages 0–1 wired; 2–8 TODO |
+
+**A** = Entire + causal analysis (also owns the seeded demo repo and recorded sessions). **B** = execution + agents (also owns Vultr and Tiger Data). Infra setup: `docs/setup.md`.
