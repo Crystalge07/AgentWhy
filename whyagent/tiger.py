@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import uuid
 
 
@@ -14,6 +15,7 @@ class RunLog:
         self.analysis_id = analysis_id or uuid.uuid4().hex[:12]
         self.pruned = pruned
         self._conn = None
+        self._lock = threading.Lock()  # the worker pool logs from several threads
         url = url if url is not None else os.environ.get("TIGER_DATABASE_URL")
         if url:
             try:
@@ -31,10 +33,11 @@ class RunLog:
         if self._conn is None:
             return
         try:
-            self._conn.execute(
-                "INSERT INTO runs (analysis_id, pruned, stage, state_hash, outcome, duration_ms, tokens, arm, cached)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (self.analysis_id, self.pruned, stage, state_hash, outcome, duration_ms, tokens, arm, cached))
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO runs (analysis_id, pruned, stage, state_hash, outcome, duration_ms, tokens, arm, cached)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (self.analysis_id, self.pruned, stage, state_hash, outcome, duration_ms, tokens, arm, cached))
         except Exception as e:
             print(f"tiger: logging disabled after error ({type(e).__name__}: {e})", file=sys.stderr)
             self._conn = None

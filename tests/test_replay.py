@@ -69,3 +69,41 @@ def test_docker_sandbox(tmp_path):
     left = subprocess.run(["docker", "ps", "-aq", "--filter", "name=whyagent-run-"], capture_output=True,
                           encoding="utf-8").stdout.strip()
     assert left == ""
+
+
+def test_vote():
+    from whyagent.replay import vote
+    assert vote(["PASS", "PASS", "TARGET_FAIL"]) == PASS
+    assert vote(["TARGET_FAIL", "OTHER", "OTHER"]) == TARGET_FAIL
+    assert vote(["PASS", "TARGET_FAIL", "OTHER"]) == OTHER
+    assert vote(["OTHER"]) == OTHER
+
+
+def _chain_repo(tmp_path, n):
+    """A repo plus n edits; edit k sets VALUE = k. The test passes while VALUE < 5."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_text("VALUE = 0\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/check.py").write_text(
+        "import sys, time; sys.path.insert(0, '.'); import app; time.sleep(1); sys.exit(0 if app.VALUE < 5 else 1)\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(k, "s", "claude-code", "app.py", "edit", f"VALUE = {k - 1}", f"VALUE = {k}") for k in range(1, n + 1)]
+    return base, steps
+
+
+def test_run_many_parallel(tmp_path):
+    import time
+    base, steps = _chain_repo(tmp_path, 8)
+    rp = Replayer(str(tmp_path), steps, f'"{sys.executable}" tests/check.py', workers=4)
+    states = [State(base, list(range(1, k + 1)), base) for k in range(8)]
+    t0 = time.time()
+    out = rp.outcomes(states + states[:2])  # duplicates run once
+    took = time.time() - t0
+    assert out == [PASS] * 5 + [TARGET_FAIL] * 3 + [PASS, PASS]
+    assert rp.runs == 8
+    assert took < 6, f"8 one-second runs on 4 workers took {took:.1f}s"
+    assert "whyagent-" not in git(tmp_path, "worktree", "list")  # every worktree cleaned up

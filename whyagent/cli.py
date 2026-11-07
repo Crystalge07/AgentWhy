@@ -138,7 +138,7 @@ def cmd_root_cause(args) -> int:
     if sandbox is None:
         return 2
     runlog = RunLog()
-    rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog)
+    rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
         code = stages_7_8(rc, rp, args, report, runlog)
     finally:
@@ -147,7 +147,7 @@ def cmd_root_cause(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    from .replay import Replayer
+    from .replay import Replayer, vote
     from .tiger import RunLog
 
     head = _git("rev-parse", "HEAD")
@@ -162,14 +162,13 @@ def cmd_analyze(args) -> int:
         return res
 
     def outcome(rp, stage, state, n):
-        res = [r.outcome for r in run(rp, stage, state, n)]
-        return max(set(res), key=res.count)
+        return vote([r.outcome for r in run(rp, stage, state, n)])
 
     # Stage 0 — precheck (tests pinned from HEAD)
     sandbox = _make_sandbox(args, head)
     if sandbox is None:
         return 2
-    rp = Replayer(".", [], args.test, sandbox=sandbox, runlog=runlog)
+    rp = Replayer(".", [], args.test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     head_res = run(rp, "precheck", State(head, [], head), 3)
     good_res = run(rp, "precheck", State(good, [], head), 3)
     g_pass = sum(r.outcome == PASS for r in good_res)
@@ -189,7 +188,7 @@ def cmd_analyze(args) -> int:
     report["precheck"]["signature"] = target_sig
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
-    rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog)
+    rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
     n = 3 if mode == "flaky" else 1
     guilty = blamed = None
     if args.line:
@@ -249,7 +248,7 @@ def main(argv=None) -> int:
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
     p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code"],
                    help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
-    p.add_argument("--workers", type=int, default=2, help="reruns in parallel (default 2)")
+    p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)
     if args.check_entire:
