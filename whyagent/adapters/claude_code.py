@@ -62,12 +62,13 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
     files: dict[str, str] = {}  # last known content, for Write hunking
     seen: set[str] = set()  # Entire transcripts can repeat a tool_use record; apply each id once
     cwd: str | None = None
+    ts = ""
 
     def add(file, kind, old, new):
         file = _rel(file, cwd)
         steps.append(Step(id=len(steps) + 1, session_id=session_id, agent="claude-code", file=file,
                           kind=kind, old_text=old, new_text=new, reasoning=reasoning,
-                          trigger=trigger, prompt=prompt))
+                          trigger=trigger, prompt=prompt, ts=ts))
 
     for line in transcript.splitlines():
         if not line.strip():
@@ -78,6 +79,7 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
             continue
         session_id = session_id or rec.get("sessionId", "")
         cwd = rec.get("cwd") or cwd
+        ts = rec.get("timestamp") or ts
         msg = rec.get("message") or {}
         content = msg.get("content")
         if rec.get("type") == "user":

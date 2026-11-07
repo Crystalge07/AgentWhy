@@ -23,6 +23,7 @@ class Step:
     reasoning: str | None = None
     trigger: str | None = None
     prompt: str = ""
+    ts: str = ""  # ISO timestamp of the tool call; used to merge concurrent sessions
 
 
 @dataclass
@@ -43,3 +44,15 @@ class RunResult:
     exit_code: int
     duration_ms: int
     tokens: int | None = None
+
+
+@dataclass
+class RootCause:
+    """A -> B handoff: the proven guilty edit, plus what the rerun stage needs."""
+    step: Step                # guilty edit (reasoning, trigger, prompt, diff)
+    collateral: list[int]     # dependents reverted alongside it
+    before_state: State       # P(k-1): rerun start state
+    edits_before: list[Step]  # for the "summary of edits 1..k-1" prompt
+    failing_output: str
+    head_state: State         # for "everything that passed at G still passes"
+    extra_causes: list[int] = field(default_factory=list)  # other edits from ddmin, if more than one cause

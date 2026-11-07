@@ -21,11 +21,28 @@ def load_session(commit: str, cwd: str = ".") -> list[Step]:
     if cp is None:
         raise LookupError(f"{commit} has no Entire checkpoint trailer (human commit)")
     meta = entire.explain(cp, cwd) or {}
-    steps: list[Step] = []
+    per_session: list[list[Step]] = []
     for i, sess in enumerate(meta.get("sessions", [])):
         raw = subprocess.run(["entire", "checkpoint", "explain", cp, "--transcript", "--session-index", str(i)],
                              cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
-        for s in parse(raw, sess.get("agent", "claude-code").lower().replace(" ", "-"), sess.get("session_id", "")):
-            s.id = len(steps) + 1
-            steps.append(s)
-    return steps
+        per_session.append(parse(raw, sess.get("agent", "claude-code").lower().replace(" ", "-"),
+                                 sess.get("session_id", "")))
+    return merge_sessions(per_session)
+
+
+def merge_sessions(per_session: list[list[Step]]) -> list[Step]:
+    """Interleave concurrent sessions' edits by timestamp and renumber 1..n.
+
+    Within a session the original order always wins (ties and missing timestamps keep it).
+    """
+    keyed = []
+    for si, steps in enumerate(per_session):
+        last_ts = ""
+        for oi, s in enumerate(steps):
+            # non-decreasing per session, so an edit with a missing or skewed timestamp never jumps ahead
+            last_ts = max(last_ts, s.ts or "")
+            keyed.append(((last_ts, si, oi), s))
+    out = [s for _, s in sorted(keyed, key=lambda kv: kv[0])]
+    for i, s in enumerate(out, 1):
+        s.id = i
+    return out
