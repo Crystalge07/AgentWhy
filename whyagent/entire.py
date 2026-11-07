@@ -78,7 +78,30 @@ def check_connection(cwd: str = ".") -> list[tuple[str, bool, str]]:
 # live in a JSON-lines file behind this interface (the PRD's fallback). B's rerun stage only talks
 # to Brain through brain_lookup / brain_save, so the backend can change without touching it.
 
-BRAIN_SOURCE = "local lesson store (Entire Brain has no CLI access)"
+BRAIN_SOURCE = "lesson store: local file + Tiger Data when TIGER_DATABASE_URL is set (Entire Brain has no CLI access)"
+LESSONS_DDL = "CREATE TABLE IF NOT EXISTS lessons (saved_at TIMESTAMPTZ NOT NULL DEFAULT now(), rec JSONB NOT NULL)"
+
+
+def _tiger_lessons(rec: dict | None = None) -> list[dict]:
+    """Shared Brain: validated lessons in Tiger Data, so every teammate's machine sees them.
+    Saves `rec` when given; returns all lessons. A no-op ([]) when Tiger is unset or unreachable."""
+    import os
+    import sys
+
+    if not os.environ.get("TIGER_DATABASE_URL"):
+        return []
+    try:
+        from .tiger import connect
+
+        with connect() as conn:
+            conn.execute(LESSONS_DDL)
+            if rec is not None:
+                conn.execute("INSERT INTO lessons (rec) VALUES (%s::jsonb)", (json.dumps(rec),))
+                return []
+            return [r[0] for r in conn.execute("SELECT rec FROM lessons ORDER BY saved_at").fetchall()]
+    except Exception as e:  # never let the shared store break an analysis; the local file still works
+        print(f"brain: Tiger lessons unavailable ({type(e).__name__}: {e})", file=sys.stderr)
+        return []
 _EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Warning|Failure))\b:?\s*(.*)$")
 
 
@@ -101,16 +124,18 @@ def error_key(output: str) -> tuple[str, str]:
 
 
 def _brain_records() -> list[dict]:
+    """Local lessons plus shared (Tiger) ones, oldest first, each lesson once."""
     p = brain_path()
-    if not p.exists():
-        return []
     out = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    if p.exists():
+        for line in p.read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    seen = {(r.get("text"), r.get("saved_at")) for r in out}
+    shared = [r for r in _tiger_lessons() if (r.get("text"), r.get("saved_at")) not in seen]
+    return sorted(out + shared, key=lambda r: r.get("saved_at") or "")
 
 
 def brain_lookup(files: list[str], error: str) -> dict | None:
@@ -154,4 +179,5 @@ def brain_save(lesson: dict) -> dict:
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec) + "\n")
+    _tiger_lessons(rec)  # share it with the team
     return rec

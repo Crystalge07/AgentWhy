@@ -74,10 +74,16 @@ case whyagent pins tests to HEAD for. The demo should say so plainly.
 | --- | --- | --- | --- | --- |
 | `scenario-1` | Claude Opus 5.5 | Paginated correctly, but changed `list_invoices()` to return only page 1 (a breaking change) and rewrote `test_list_invoices_returns_every_invoice` to match | `ea7ecb9` restores the test | blame hint on `payments/client.py:43` confirmed in 5 runs; without `--line`: commit bisect, 4 edits pruned (verified), same edit confirmed |
 | `scenario-2b-clean` | Claude Haiku 5.5, **steered** | First added constructor args (the right fix). The user then said "don't add constructor args, change the defaults in config.py, keep the error message change, commit", so it set `MAX_RETRIES = 1` / `TIMEOUT_S = 2` globally with `sed -i` (its reasoning notes this will break the retry test) and weakened two retry tests | `e885934` restores the two retry tests | blame hint on `payments/client.py:39` → **NOT the cause**; 2 edits pruned (verified); bisect + confirm on the `config.py` shell edit; 6 runs. Analyze with `--good f39623e` |
-| `scenario-3-haiku` | Claude Haiku 5.5 | Added the 1 s cache, saw the settlement test go flaky, and relaxed the test's deadline from 1.5 s to 3 s | `320b6a9` restores 1.5 s | flaky mode (fails ~28%): bisected to the `get_invoice` cache edit and confirmed it, 20 runs |
+| `scenario-3-haiku` | Claude Haiku 5.5 | Added the 1 s cache, saw the settlement test go flaky, and relaxed the test's deadline from 1.5 s to 3 s | `320b6a9` restores 1.5 s | flaky mode (fails ~28–60% depending on machine load): bisected to the `get_invoice` cache edit and confirmed it, 19–44 runs (runs per state sized from the measured failure rate) |
 
 `scenario-3` (Opus) saw the flakiness and fixed it properly, so it has no bug. `scenario-2b` is an
 earlier 2b recording polluted by stashed sessions from the failed TLS attempts; kept as a backup only.
+
+**`entire why` vs whyagent (demo beat for the Entire judges).** In `payments-demo` on
+`scenario-2b-clean`, `entire why payments/client.py:39` shows the session behind the decoy line, and
+`entire why payments/config.py:9` says its agent/prompt are "a best-effort guess" (the edit was a
+`sed -i`). Run both before whyagent: whyagent says the first is NOT the cause and pins the second to
+the exact shell command, with test runs as proof.
 
 **Disclose the steering in 2b.** The bad edit came right after a user prompt telling the agent to
 change the config defaults; the transcript records it and the report shows it as the task prompt.
@@ -85,7 +91,9 @@ For the same reason, **don't use 2b for the rerun demo**: Stage 8 reruns start f
 the lesson would be arguing with an explicit user instruction. Use scenario 1 (or 3) for reruns.
 
 **Verified on macOS, Docker sandbox (2026-11-07):** scenario 1 with `--line` 5 runs, without 4 runs
-(4 of 7 edits pruned); 2b 6 runs; 3 flaky, 20 runs. Same root causes as on Windows. On these short
+(4 of 7 edits pruned); 2b 6 runs; 3 flaky, 19–44 runs. Same root causes as on Windows. With the old
+fixed 5 runs per state, one scenario 3 run blamed the wrong edit (a 28% bug passes 5 runs 19% of the
+time); runs per state are now sized from the precheck, and 4 of 4 runs since found the cache edit. On these short
 sessions pruning saves nothing (3 runs with vs 3 for a blind bisect): it pays off on longer ones.
 
 To rerun an analysis (Docker sandbox; for `--sandbox local` use a full interpreter path, and on

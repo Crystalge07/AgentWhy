@@ -146,3 +146,39 @@ def test_run_many_parallel(tmp_path):
     assert rp.runs == 8
     assert took < 6, f"8 one-second runs on 4 workers took {took:.1f}s"
     assert "whyagent-" not in git(tmp_path, "worktree", "list")  # every worktree cleaned up
+
+
+def test_cache_tops_up_and_stops_at_first_target_failure(tmp_path):
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_text("OK = True\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/check.py").write_text("import sys; sys.path.insert(0,'.'); import app; sys.exit(0 if app.OK else 1)\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "OK = True", "OK = False")]
+    rp = Replayer(str(tmp_path), steps, f'"{sys.executable}" tests/check.py')
+    assert len(rp.run(State(base, [], base), 2)) == 2 and rp.runs == 2
+    assert len(rp.run(State(base, [], base), 3)) == 3 and rp.runs == 3   # only the missing run
+    bad = rp.run(State(base, [1], base), 10, until_fail=True)
+    assert [r.outcome for r in bad] == [TARGET_FAIL] and rp.runs == 4    # stopped at the first failure
+    assert len(rp.run(State(base, [1], base), 10, until_fail=True)) == 1 and rp.runs == 4  # cached evidence
+
+
+def test_flaky_runs_per_state():
+    from whyagent.cli import flaky_runs
+    assert flaky_runs(0.28) == 10      # 0.72^10 < 5%; 5 runs would miss the bug 19% of the time
+    assert flaky_runs(0.5) == 5        # floor
+    assert flaky_runs(0.02) == 30      # cap
+    assert flaky_runs(1.0) == 1
+    for p in (0.1, 0.2, 0.28, 0.4):
+        assert (1 - p) ** flaky_runs(p) <= 0.05
+
+
+def test_rate_lower_bound_is_conservative():
+    from whyagent.cli import flaky_runs, rate_lower_bound
+    assert rate_lower_bound(6, 15) < 0.3 < 6 / 15             # a lucky 40% precheck can't talk us down to 6 runs
+    assert flaky_runs(rate_lower_bound(6, 15)) >= 10
+    assert rate_lower_bound(15, 15) > 0.85 and rate_lower_bound(0, 15) == 0

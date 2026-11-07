@@ -13,6 +13,7 @@ payments/client.py:36: ApiError
 @pytest.fixture(autouse=True)
 def brain(tmp_path, monkeypatch):
     monkeypatch.setenv("WHYAGENT_BRAIN", str(tmp_path / "brain.jsonl"))
+    monkeypatch.delenv("TIGER_DATABASE_URL", raising=False)  # never touch the shared store from tests
 
 
 def lesson(**kw):
@@ -48,3 +49,33 @@ def test_only_validated_lessons_are_saved():
     with pytest.raises(ValueError, match="missing"):
         entire.brain_save({"verdict": "VALIDATED", "text": "x"})
     assert not entire.brain_path().exists()
+
+
+def test_lessons_are_shared_through_tiger(tmp_path, monkeypatch):
+    """Saved on one machine (local file + Tiger), found on another (empty local file, same Tiger)."""
+    import json as _json
+
+    table: list[dict] = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, args=()):
+            if sql.startswith("INSERT"):
+                table.append(_json.loads(args[0]))
+            return type("R", (), {"fetchall": lambda _s: [(r,) for r in table]})()
+
+    import whyagent.tiger
+    monkeypatch.setenv("TIGER_DATABASE_URL", "postgres://fake")
+    monkeypatch.setattr(whyagent.tiger, "connect", lambda url=None: Conn())
+    entire.brain_save(lesson())
+    assert len(table) == 1
+    monkeypatch.setenv("WHYAGENT_BRAIN", str(tmp_path / "other-machine.jsonl"))
+    hit = entire.brain_lookup(["payments/config.py"], OUT)
+    assert hit and hit["text"].startswith("Never disable TLS")
+    monkeypatch.setenv("WHYAGENT_BRAIN", str(tmp_path / "brain.jsonl"))  # both stores: still one lesson
+    assert len(entire._brain_records()) == 1

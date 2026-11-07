@@ -14,10 +14,49 @@ from .types import PASS, TARGET_FAIL, RootCause, State
 
 
 PRECHECK_RUNS = 5
+FLAKY_ESTIMATE_RUNS = 15  # HEAD runs used to estimate a flaky test's failure rate
+MISS = 0.05               # flaky mode: chance a buggy state passes every one of its runs
+
+
+def rate_lower_bound(fails: int, n: int, z: float = 1.28) -> float:
+    """One-sided 90% Wilson lower bound on a failure rate. Sizing from the point estimate would trust a
+    lucky precheck: 6/15 fails reads as 40% for a bug that really fails 28%, and too few runs follow."""
+    if n == 0:
+        return 0.0
+    p = fails / n
+    centre = p + z * z / (2 * n)
+    margin = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return max(0.0, (centre - margin) / (1 + z * z / n))
+
+
+def flaky_runs(fail_rate: float, miss: float = MISS, lo: int = 5, hi: int = 30) -> int:
+    """Runs per state so a state with the bug fails at least once with probability >= 1 - miss.
+    A bug failing 28% of runs needs 10 (5 runs miss it 19% of the time, per state)."""
+    import math
+
+    if fail_rate >= 1:
+        return 1
+    if fail_rate <= 0:
+        return hi
+    return max(lo, min(hi, math.ceil(math.log(miss) / math.log(1 - fail_rate))))
 
 
 def _git(*a) -> str:
     return subprocess.run(["git", *a], capture_output=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
+
+
+def line_from_traceback(output: str, is_test=None) -> str | None:
+    """The deepest non-test frame in pytest's failure output ("path.py:39: ApiError"), as file:line.
+    PRD: --line is parsed from the traceback when omitted. None when the failure is in the test itself."""
+    import re
+
+    from .replay import is_test_file
+
+    is_test = is_test or is_test_file
+    hits = [(m.group(1).replace("\\", "/"), m.group(2))
+            for m in re.finditer(r"^([\w./\\-]+\.py):(\d+): \S", output, flags=re.M)]
+    hits = [h for h in hits if not is_test(h[0])]
+    return f"{hits[-1][0]}:{hits[-1][1]}" if hits else None
 
 
 def cmd_check_entire(_args) -> int:
@@ -96,7 +135,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
             msg = str(e).split(". {")[0][:200]
             print(f"lesson: Gemini failed ({type(e).__name__}: {msg})")
             report.note(f"Lesson generation failed: {msg}")
-            return 1
+            return 0 if args.no_rerun else 1  # the root cause is proven either way; only reruns need a lesson
     hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
     print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)"}.get(source, "") + hidden)
     report["lesson"] = {"text": lesson, "source": source}
@@ -188,7 +227,7 @@ def cmd_analyze(args) -> int:
 
     def run(rp, stage, state, n):
         rp.stage = stage
-        res = rp.run(state, n)
+        res = rp.run(state, n, until_fail=n > 1)
         report.log_runs(stage, state_label(state), res)
         return res
 
@@ -222,17 +261,44 @@ def cmd_analyze(args) -> int:
     print(f"precheck: HEAD fails {h_fail}/{N}, good commit passes {N}/{N} → {mode}")
     target_sig = next(r.signature for r in head_res if r.outcome != PASS)
     report["precheck"]["signature"] = target_sig
+    n = 1
+    if mode == "flaky":
+        # Size runs per state from the failure rate, so a state with the bug reads as failing 95% of the time
+        rp.stage = "precheck"
+        more = rp.run(State(head, [], head), FLAKY_ESTIMATE_RUNS)
+        report.log_runs("precheck", state_label(State(head, [], head)), more[N:])
+        fails = sum(r.outcome != PASS for r in more)
+        rate, low = fails / len(more), rate_lower_bound(fails, len(more))
+        n = flaky_runs(low)
+        good_more = rp.run(State(good, [], head), n)  # the good commit must pass as many runs as any state
+        report.log_runs("precheck", state_label(State(good, [], head)), good_more[N:])
+        if any(r.outcome != PASS for r in good_more):
+            print(f"precheck: good commit fails {sum(r.outcome != PASS for r in good_more)}/{n} → abort")
+            report.note("Aborted: the good commit fails some runs too, so the test fails without the agent's changes.")
+            return _finish(report, args, 2)
+        report["precheck"].update(fail_rate=round(rate, 2), fail_rate_low=round(low, 2), runs_per_state=n)
+        print(f"precheck: HEAD fails {fails}/{len(more)} runs ({round(rate * 100)}%, at least {round(low * 100)}% "
+              f"with 90% confidence) → {n} runs per state, so a state with the bug shows it ≥95% of the time")
+    if not args.line:
+        found = line_from_traceback(next(r.output for r in head_res if r.outcome != PASS))
+        if found and subprocess.run(["git", "cat-file", "-e", f"HEAD:{found.rsplit(':', 1)[0]}"],
+                                    capture_output=True).returncode == 0:
+            args.line = report["meta"]["line"] = found
+            print(f"blame hint: {found}, from the traceback (pass --line to override)")
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
     rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
-    n = 5 if mode == "flaky" else 1  # flaky: any target failure in 5 runs counts (replay.vote)
+    # flaky: n runs per state from the precheck; any target failure counts (replay.vote)
     guilty = blamed = None
     if args.line:
         path, ln = args.line.rsplit(":", 1)
         c = _git("blame", "-L", f"{ln},{ln}", "--porcelain", "HEAD", "--", path).split()[0]
         blamed = c
-        parent = _git("rev-parse", f"{c}^")
-        if (outcome(rp, "commit", State(parent, [], head), n) == PASS
+        in_range = subprocess.run(["git", "merge-base", "--is-ancestor", c, good], capture_output=True).returncode != 0
+        if not in_range:  # written at or before --good, where the test passes: it can't be the guilty commit
+            print(f"commit: blame hint {c[:7]} is older than --good, bisecting")
+        parent = _git("rev-parse", f"{c}^") if in_range else None
+        if (in_range and outcome(rp, "commit", State(parent, [], head), n) == PASS
                 and outcome(rp, "commit", State(c, [], head), n) == TARGET_FAIL):
             guilty = c
             print(f"commit: blamed {c[:7]} ✓ confirmed (parent passes, commit fails)")
@@ -293,6 +359,15 @@ def cmd_analyze(args) -> int:
         print(f"root cause handoff: {rc_path}")
         # Stages 7–8 (B): lesson, then counterfactual reruns
         code = stages_7_8(rc, rp2, args, report, runlog)
+        if args.trail:
+            from .trail import post_finding
+            try:
+                out = post_finding(rc, report, client_id=f"whyagent-{runlog.analysis_id}")
+                print(f"trail: posted the root cause as a finding\n{out.strip()}")
+                report["trail"] = {"posted": True, "output": out.strip()}
+            except Exception as e:  # noqa: BLE001 — the analysis already succeeded
+                print(f"trail: couldn't post the finding ({str(e).splitlines()[0][:200]})")
+                report.note(f"Couldn't post the trail finding: {e}")
     finally:
         runlog.close()
     return _finish(report, args, code)
@@ -326,6 +401,8 @@ def main(argv=None) -> int:
                    help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
     p.add_argument("--chart", action="store_true", help="write the Tiger Data pruning chart (.whyagent/chart.html)")
+    p.add_argument("--trail", action="store_true",
+                   help="post the root cause as a finding on this branch's Entire trail, with the revert as a suggested patch")
     p.add_argument("--lesson", help="test this lesson in the reruns instead of writing one with Gemini (Stage 7)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)

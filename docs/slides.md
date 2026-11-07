@@ -41,12 +41,27 @@ Three promises:
 2. **Prove it**: causality comes from experiments: the test passes right before the edit, fails right after, and passes again when only that edit is reverted. No LLM opinion in the verdict.
 3. **Learn from it, verified**: generate a lesson, rerun the agent with and without it, and save it to memory only if it's statistically better (Fisher exact test).
 
-Input: one failing test and one known-good commit. Everything else is automatic.
+Input: one failing test and one known-good commit. Everything else is automatic; even the line to blame is read from the traceback.
 
 ```
-whyagent --test "pytest tests/test_client.py::test_retries_server_errors_then_succeeds" \
-         --good f39623e --line payments/client.py:39
+whyagent --good f39623e --test "pytest tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
+
+---
+
+## 3b. Why not just `entire why`? (great for the Entire judges)
+
+Entire already ships `entire why <file:line>`: line → commit → session → prompt. It's `git blame` for agent sessions, and it's a good starting point. whyagent builds on the same data and goes further. Real output on scenario 2:
+
+| | `entire why` | whyagent |
+| --- | --- | --- |
+| On `client.py:39` (where the traceback points) | Shows the session and prompt behind that line: it points you at the **decoy** | Reverts that edit and reruns the test: **NOT the cause** |
+| On `config.py:9` (the real cause) | *"the agent and prompt shown are a best-effort guess"* (the edit was made with `sed`, not an edit tool) | Pins it to the exact `sed -i` command, the agent's reasoning and the prompt, and proves it with test runs |
+| Granularity | Commit / session | The single edit inside the session |
+| Evidence | Attribution | Causality: passes before, fails after, passes when reverted |
+| Afterwards | n/a | Lesson + counterfactual reruns, saved only if validated |
+
+One-liner: *"`entire why` tells you who wrote the line. whyagent tells you which decision broke the test, and proves it."*
 
 ---
 
@@ -69,7 +84,7 @@ A simple diagram: **Entire session → edits → experiments → proven root cau
 **Rigor details (good for a "why trust it" slide):**
 - **Three outcomes, not two:** every run is `PASS`, `TARGET_FAIL` (same failure signature as HEAD), or `OTHER` (crash, timeout, different error). `OTHER` never counts as evidence, so a half-finished state with a syntax error can't pose as the bug.
 - **Tests are pinned to HEAD** in every state, so an agent that "fixes" a test by editing the test can't hide the bug. (All three real recordings did exactly this!)
-- **Flaky mode:** 5 runs per state; any target failure counts. This catches a bug that fails only ~28% of the time.
+- **Flaky mode, sized by statistics:** the precheck measures the failure rate (15 runs), then picks runs per state so a buggy state shows the bug with 95% probability (a 28% bug → 10 runs). Any target failure counts, and a state stops at its first failure. With a fixed 5 runs, a 28% bug hides 19% of the time per state; we saw it pick the wrong edit once before fixing this.
 - **Every run is in a throwaway Docker container**, with network off for tests. Agent reruns can only reach the model API.
 - **Result cache:** no code state is tested twice.
 - **Rerun success means:** the target test passes, everything that passed before still passes (no deleting the feature), and test files are untouched (no tampering).
@@ -84,7 +99,7 @@ All on a seeded **payments API client** repo. The bugs are **real mistakes real 
 | --- | --- | --- | --- |
 | **1. Obvious** | Claude Opus | Added pagination, but quietly changed `list_invoices()` to return only page 1 (a breaking API change), then **rewrote the test to match** | Blame hint confirmed in **5 test runs**. Without the hint: commit bisect, 4 of 7 edits pruned (verified), same edit found |
 | **2. Sneaky** (blame is wrong) | Claude Haiku | Asked to make a smoke script fail fast; it set `MAX_RETRIES = 1` **globally in `config.py`** with a `sed -i` shell command, and also rewrote an error line in `client.py`. The traceback points at the error line | Blame hint: **NOT the cause** (revert, still fails). Bisect finds `config.py:9`, even though the edit was made with `sed`, not an edit tool. **6 test runs** |
-| **3. Flaky** | Claude Haiku | Added a 1-second cache to `get_invoice` with no invalidation. The settlement test now fails ~28% of the time, and the agent **loosened the test deadline** to hide it | Flaky mode: bisected to the cache edit and confirmed, ~20 runs |
+| **3. Flaky** | Claude Haiku | Added a 1-second cache to `get_invoice` with no invalidation. The settlement test now fails ~28% of the time, and the agent **loosened the test deadline** to hide it | Flaky mode: bisected to the cache edit and confirmed, 19–44 runs; right in 4 of 4 runs |
 
 Disclosure for scenario 2: the user steered the agent toward editing `config.py`, and the transcript records it. whyagent still had to find the right edit while blame pointed elsewhere.
 
@@ -125,9 +140,9 @@ test runs used: 6
 | Metric | Target | Result |
 | --- | --- | --- |
 | Correct root cause on recorded bugs | 3/3 | **3/3** |
-| Test runs to find the edit | ≤ 6 for 15 edits | **5–6** (stable), ~20 (flaky, 5 runs per state) |
+| Test runs to find the edit | ≤ 6 for 15 edits | **5–6** (stable); flaky: ~10 runs per state, sized from the failure rate |
 | Edits pruned before bisecting | measured | 4 of 7 (scenario 1), 2 of 5 (scenario 2), each verified with 1 run |
-| Fewer runs with pruning | measured | Break-even on these short sessions (3 vs 3); grows with session length\* |
+| Fewer runs with pruning | measured | Measured in Tiger Data: 9 → 8 edit-level test runs across 2 bugs (−11%). Small on these short sessions; grows with session length\* |
 | Lessons statistically validated | ≥ 1 | 1\* (p = 0.004\*) |
 | End-to-end time per bug | < 5 min | \* |
 
@@ -149,7 +164,7 @@ test runs used: 6
 - **Docker**: one image per analysis, a throwaway container per test run, network off; worker pool for parallel runs
 - **Gemini** (`google-genai`): writes lessons; **Gemini CLI** is the default rerun agent (Claude Code headless also supported)
 - **Vultr** Cloud Compute: VM hosting the sandbox pool so bisect rounds and rerun arms run in parallel
-- **Tiger Data** (TimescaleDB / Postgres, `psycopg`): hypertable of every test run and rerun, plus a continuous aggregate for the pruning-savings chart
+- **Tiger Data** (TimescaleDB / Postgres, `psycopg`): hypertable of every test run and rerun, a continuous aggregate for the pruning-savings chart, and the **shared team Brain** (validated lessons, so every teammate's whyagent sees them)
 - **Stats**: one-sided Fisher exact test (no SciPy dependency)
 - **Report**: self-contained HTML report + JSON
 - **GoDaddy**: project domain
@@ -163,10 +178,10 @@ test runs used: 6
 
 | Track | What it does in whyagent | Why it isn't bolted on |
 | --- | --- | --- |
-| **Entire** (main) | Sessions + checkpoint trailers are the core input: commit → session → edits with reasoning and triggers. Graph-style pruning cuts test runs. Brain stores only validated lessons | Without Entire's commit-to-session link there's no edit-level blame at all |
+| **Entire** (main) | Sessions + checkpoint trailers are the core input: commit → session → edits with reasoning and triggers. Graph-style pruning cuts test runs. Brain stores only validated lessons. **Trails:** `--trail` posts the proven root cause as a finding on the agent's trail, on the guilty line, with the revert attached as a one-click suggested patch | Without Entire's commit-to-session link there's no edit-level blame at all |
 | **Gemini** | Writes the lesson from the trigger, reasoning, diff and failure; Gemini CLI reruns the task in both arms | The lesson is the hypothesis that the reruns test |
 | **Vultr** | Hosts the Docker worker pool; parallel bisect rounds (≈ log base (W+1) of n) and parallel rerun arms | Turns ~10 sequential agent reruns into a couple of minutes |
-| **Tiger Data** | Logs every run (stage, state hash, outcome, duration, tokens) in a hypertable; continuous aggregate → runs/tokens per stage, pruned vs blind | It's the evidence for the token-savings claim |
+| **Tiger Data** | Logs every run (stage, state hash, outcome, duration, tokens) in a hypertable; continuous aggregate → runs/tokens per stage, pruned vs blind; stores the team's validated lessons (shared Brain) | It's the evidence for the token-savings claim, and the team's shared memory |
 | **GoDaddy** | Domain for the project | n/a |
 
 ---
@@ -187,9 +202,9 @@ test runs used: 6
 
 - **More agents:** adapters for Codex, Cursor, Copilot CLI, Gemini CLI transcripts (anything Entire records).
 - **More languages and test runners:** Jest, Go test, cargo test; the generic adapter already works on exit code + output signature.
-- **Native Entire Graph and Brain APIs** in place of our static import graph and local lesson store; open the fix as an **Entire Trail**.
+- **Native Entire Graph and Brain APIs** in place of our static import graph and our lesson store.
+- **Automatic trail findings:** run on every agent trail whose CI fails, and post the finding without a human starting it.
 - **GitHub App / CI action** that comments the root cause on the failing PR.
-- **Shared team Brain** in Tiger Data, synced across machines.
 - **Auto-regenerate lessons** that test as ineffective, and retest them.
 - **Mid-session memory replay:** resume reruns from the agent's exact context instead of a summary.
 - **Non-test failure signals:** type checkers, linters, security scanners, perf regressions.

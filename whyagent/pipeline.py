@@ -104,14 +104,15 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     def run(stage: str):
         def go(ids: list[int]) -> str:
             rp.stage = stage  # tags Tiger rows
-            return record(stage, ids, rp.run(State(parent, list(ids), head), opts.n))
+            return record(stage, ids, rp.run(State(parent, list(ids), head), opts.n, until_fail=opts.n > 1))
         return go
 
     def run_many(stage: str):
         """Several prefixes at once on B's worker pool (Replayer.run_many)."""
         def go(prefixes: list[list[int]]) -> list[str]:
             rp.stage = stage
-            results = rp.run_many([State(parent, list(p), head) for p in prefixes], opts.n)
+            results = rp.run_many([State(parent, list(p), head) for p in prefixes], opts.n,
+                                  until_fail=opts.n > 1)
             return [record(stage, p, res) for p, res in zip(prefixes, results)]
         return go
 
@@ -194,6 +195,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                         + ("still fails without them ✓ pruned" if verified else
                            f"{verdict} without them → graph missed a dependency, pruning dropped"))
                 else:
+                    report["pruning"] = {"pruned": [], "candidates": [], "verified": None, "source": graph.SOURCE,
+                                         "runs_with": None, "runs_without": None}
                     say("pruning: every edit is reachable from the test, nothing to prune")
 
         # Stage 5: prefix bisect

@@ -206,13 +206,16 @@ html += `<section class="verdict">
 // Pipeline
 const st = [];
 const S = (n, name, state, msg) => st.push({n, name, state, msg});
-S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}` : "");
+S(0, "precheck", pre ? "done" : "todo", pre ? `HEAD fails ${pre.head_fail}/${pre.n}, good passes ${pre.good_pass}/${pre.n} → ${pre.mode}${pre.runs_per_state ? ` (fails ~${Math.round(pre.fail_rate * 100)}% of runs → ${pre.runs_per_state} runs per state, stopping at the first failure)` : ""}` : "");
 S(1, "commit", cm ? "done" : "todo", cm ? (cm.method === "blame" ? `blamed ${short(cm.sha)} ✓ confirmed (parent passes, commit fails)` : `${cm.blamed ? `blame hint ${short(cm.blamed)} wrong, ` : ""}bisected → ${short(cm.sha)}`) + (cm.checkpoint ? ` · checkpoint ${cm.checkpoint}` : "") + (cm.human ? " · no checkpoint, human-written" : "") : "");
 const shellN = ses && (ses.shell_ids || []).length;
 S(2, "session", ses ? (ses.unattributed ? "warn" : "done") : "todo", ses ? `${esc(ses.id)} · ${steps.length} edits · replay ${!ses.unattributed ? `matches commit ✓${shellN ? ` (${shellN} edit${shellN > 1 ? "s" : ""} made from the agent's shell)` : ""}` : "differs, leftover diff kept as an unattributed edit"}` : "");
-S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : "");
-S(4, "pruning", pr ? (pr.verified ? "done" : "warn") : "todo", pr ? (pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
-S(5, "bisect", bi ? "done" : "todo", bi ? `${bi.edits ?? steps.filter(s => !s.test).length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.filter(p => !p.boundary_check).length} test runs → first failing prefix at edit #${bi.boundary}` : "");
+const hintRight = bh && bh.is_cause;
+S(3, "blame hint", bh ? "done" : "todo", bh ? `edit ${bh.step_ids.map(i => "#" + i).join(", ")} touches ${esc(bh.line)} → ${bh.is_cause ? "root cause ✓" : "NOT the cause (revert, still fails)"}` : ses ? (m.line ? `skipped (${esc(m.line)} wasn't written by this session)` : "skipped (no --line, and the traceback has no frame outside the tests)") : "");
+S(4, "pruning", hintRight ? "todo" : pr ? (pr.verified === false ? "warn" : "done") : "todo",
+  hintRight ? "skipped, the blame hint was right" :
+  pr ? (!(pr.candidates || []).length ? "every edit is reachable from the test, nothing to prune" : pr.verified ? `Graph pruned ${pr.pruned.length} edits (${pr.pruned.map(i => "#" + i).join(", ")}), verified in 1 run` : "Graph pruning failed verification, dropped") : "");
+S(5, "bisect", hintRight ? "todo" : bi ? "done" : "todo", hintRight ? `skipped, boundary checked directly: the test passes before edit #${rc ? rc.step_id : "?"} and fails after it (${(bi && bi.probes || []).length} runs)` : bi ? `${bi.edits ?? steps.filter(s => !s.test).length - (pr && pr.verified ? pr.pruned.length : 0)} edits → ${bi.probes.filter(p => !p.boundary_check).length} test runs → first failing prefix at edit #${bi.boundary}` : "");
 S(6, "confirm", cf ? (cf.outcome === "PASS" ? "done" : "warn") : "todo", cf ? (cf.outcome === "PASS" ? `revert #${cf.step_id} from final → test passes ✓ root cause${cf.collateral && cf.collateral.length ? ` (collateral ${cf.collateral.map(i => "#" + i).join(", ")})` : ""}` : `revert #${cf.step_id} still fails → ddmin ${cf.ddmin ? "→ {" + cf.ddmin.join(", ") + "}" : "inconclusive"}`) : "");
 S(7, "lesson", ls ? "done" : "todo", ls ? `${ls.source === "brain" ? "reused from Brain" : ls.source === "given" ? "given with --lesson" : "written by " + esc(ls.source || "Gemini")}` : "");
 S(8, "reruns", rr ? "done" : "todo", rr ? `without lesson ${count(rr.a)}/${valid(rr.a)} · with lesson ${count(rr.b)}/${valid(rr.b)} · p = ${fmtP(rr.p)} → ${rr.verdict}` : "");

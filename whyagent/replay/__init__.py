@@ -114,30 +114,39 @@ class Replayer:
             return RunResult(TARGET_FAIL, sig, e.exit_code, ms, output=tail)
         return RunResult(OTHER, sig, e.exit_code, ms, output=tail)
 
-    def run(self, state: State, n: int = 1) -> list[RunResult]:
+    def run(self, state: State, n: int = 1, until_fail: bool = False) -> list[RunResult]:
+        """n runs of `state`. Cached runs count toward n, so asking again for more only runs the difference.
+        until_fail: stop at the first TARGET_FAIL. Under any-failure voting (vote) the state already reads
+        as failing, and more runs can't change that; passing states still get all n."""
         k = state.key()
         with self._lock:
-            hit = self.cache.get(k)
-        if hit is not None and len(hit) >= n:
+            hit = list(self.cache.get(k) or [])
+        if len(hit) >= n or (until_fail and any(r.outcome == TARGET_FAIL for r in hit)):
             res = hit[:n]
             self._log(k, res, cached=True)
             return res
+        self._log(k, hit, cached=True)
+        new: list[RunResult] = []
         d = self.build(state)
         try:
-            res = [self._once(d) for _ in range(n)]
+            for _ in range(n - len(hit)):
+                new.append(self._once(d))
+                if until_fail and new[-1].outcome == TARGET_FAIL:
+                    break
         finally:
             self.teardown(d)
+        res = hit + new
         with self._lock:
             self.cache[k] = res
-        self._log(k, res)
+        self._log(k, new)
         return res
 
-    def run_many(self, states: list[State], n: int = 1) -> list[list[RunResult]]:
+    def run_many(self, states: list[State], n: int = 1, until_fail: bool = False) -> list[list[RunResult]]:
         """Test several states at once on up to `workers` sandboxes (one bisect round, say). Order is kept;
         duplicate states run once. A state's n repeats stay sequential in one worktree."""
         uniq = list({s.key(): s for s in states}.values())
         with ThreadPoolExecutor(max_workers=min(self.workers, len(uniq)) or 1) as pool:
-            done = dict(zip([s.key() for s in uniq], pool.map(lambda s: self.run(s, n), uniq)))
+            done = dict(zip([s.key() for s in uniq], pool.map(lambda s: self.run(s, n, until_fail), uniq)))
         return [done[s.key()] for s in states]
 
     def outcomes(self, states: list[State], n: int = 1) -> list[str]:
