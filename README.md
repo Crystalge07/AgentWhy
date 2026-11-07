@@ -31,3 +31,4 @@ whyagent --test "pytest tests/test_auth.py::test_login" --good a1b2c3d --line sr
 | `whyagent/cli.py` | A: stages 1–7, B: stages 0, 8 | Stages 0–1 wired; 2–8 TODO |
 
 **A** = Entire + causal analysis (also owns the seeded demo repo and recorded sessions). **B** = execution + agents (also owns Vultr and Tiger Data). Infra setup: `docs/setup.md`.
+<!-- Entire capture sanity check 2026-11-07 -->
