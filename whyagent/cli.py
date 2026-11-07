@@ -247,7 +247,8 @@ def main(argv=None) -> int:
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
-    p.add_argument("--rerun-agent", default="gemini-cli", help="agent for counterfactual reruns (default gemini-cli)")
+    p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code"],
+                   help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
     p.add_argument("--workers", type=int, default=2, help="reruns in parallel (default 2)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)

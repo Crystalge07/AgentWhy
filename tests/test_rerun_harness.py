@@ -98,3 +98,16 @@ def test_gemini_error_detection():
     assert g.error(ok, 0) is None and g.tokens(ok) == 1234
     turns = '{"error": {"message": "Reached max session turns for this session."}}'
     assert g.error(turns, 1) is None
+
+
+def test_claude_code_agent(monkeypatch):
+    from whyagent.rerun import ClaudeCode, agent_by_name
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    c = agent_by_name("claude-code")
+    assert isinstance(c, ClaudeCode) and "--max-turns 15" in c.command
+    ok = '{"type":"result","subtype":"success","is_error":false,"num_turns":6,"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5}}'
+    assert c.error(ok, 0) is None and c.tokens(ok) == 125
+    auth = '{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Invalid API key"}'
+    assert "Invalid API key" in c.error(auth, 1)
+    capped = '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":15}'
+    assert c.error(capped, 1) is None

@@ -57,6 +57,14 @@ def _json_tail(output: str) -> dict | None:
         return None
 
 
+_NODE_LINES = [
+    # Node from the official image; Debian-based like python:*-slim, so the binary runs as-is.
+    "COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node",
+    "COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules",
+    "RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm",
+]
+
+
 class GeminiCLI(Agent):
     def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "0.67.0"):
         settings = json.dumps({"model": {"maxSessionTurns": max_turns}})
@@ -65,13 +73,8 @@ class GeminiCLI(Agent):
             name="gemini-cli",
             command=('mkdir -p "$HOME/.gemini" && printf "%s" "$WHYAGENT_GEMINI_SETTINGS" > "$HOME/.gemini/settings.json"'
                      ' && gemini -p "$WHYAGENT_PROMPT" --yolo -o json' + (f" -m {model}" if model else "")),
-            image_lines=[
-                # Node from the official image; Debian-based like python:*-slim, so the binary runs as-is.
-                "COPY --from=node:20-slim /usr/local/bin/node /usr/local/bin/node",
-                "COPY --from=node:20-slim /usr/local/lib/node_modules /usr/local/lib/node_modules",
-                "RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm"
-                f" && npm install -g --no-fund --no-audit @google/gemini-cli@{version}",
-            ],
+            image_lines=_NODE_LINES[:-1] + [
+                _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @google/gemini-cli@{version}"],
             env={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""), "GEMINI_CLI_TRUST_WORKSPACE": "true",
                  "WHYAGENT_GEMINI_SETTINGS": settings},
         )
@@ -93,6 +96,37 @@ class GeminiCLI(Agent):
         for m in (data.get("stats", {}).get("models", {}) or {}).values():
             t = m.get("tokens", {}) if isinstance(m, dict) else {}
             total += int(t.get("total") or 0)
+        return total or None
+
+
+class ClaudeCode(Agent):
+    """PRD backup rerun agent: Claude Code headless. Needs ANTHROPIC_API_KEY (no subscription login in the container)."""
+
+    def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "2.1.310"):
+        model = model or os.environ.get("WHYAGENT_CLAUDE_MODEL")
+        super().__init__(
+            name="claude-code",
+            command=(f'claude -p "$WHYAGENT_PROMPT" --output-format json --max-turns {max_turns}'
+                     " --dangerously-skip-permissions" + (f" --model {model}" if model else "")),
+            image_lines=_NODE_LINES[:-1] + [
+                _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@{version}"],
+            env={"ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""), "DISABLE_AUTOUPDATER": "1",
+                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+        )
+
+    def error(self, output: str, exit_code: int) -> str | None:
+        data = _json_tail(output)
+        if data and data.get("is_error") and not str(data.get("subtype", "")).startswith("error_max_turns"):
+            if (data.get("num_turns") or 0) <= 1:  # failed before doing any work: auth, quota, bad model
+                return f"Claude Code error: {str(data.get('result') or data.get('subtype'))[:200]}"
+        if not os.environ.get("ANTHROPIC_API_KEY") and exit_code != 0:
+            return "Claude Code error: ANTHROPIC_API_KEY is not set"
+        return super().error(output, exit_code)
+
+    def tokens(self, output: str) -> int | None:
+        u = (_json_tail(output) or {}).get("usage") or {}
+        total = sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                                                   "cache_read_input_tokens"))
         return total or None
 
 
@@ -211,4 +245,6 @@ class Reruns:
 def agent_by_name(name: str) -> Agent:
     if name == "gemini-cli":
         return GeminiCLI()
-    raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli)")
+    if name == "claude-code":
+        return ClaudeCode()
+    raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code)")

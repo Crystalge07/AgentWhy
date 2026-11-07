@@ -24,5 +24,5 @@ def decide(a_pass: int, a_n: int, b_pass: int, b_n: int) -> tuple[str, float]:
     return "INEFFECTIVE", p
 
 
-from .harness import Agent, GeminiCLI, RerunResult, Reruns, agent_by_name, task_prompt  # noqa: E402,F401
+from .harness import Agent, ClaudeCode, GeminiCLI, RerunResult, Reruns, agent_by_name, task_prompt  # noqa: E402,F401
 from .lesson import make_lesson  # noqa: E402,F401
