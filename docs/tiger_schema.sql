@@ -1,5 +1,13 @@
 -- whyagent run log (Tiger Data / TimescaleDB)
 
+-- One row per whyagent invocation; whyagent also creates this on first connect.
+CREATE TABLE IF NOT EXISTS analyses (
+    analysis_id TEXT PRIMARY KEY,
+    started     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    label       TEXT NOT NULL,      -- which bug: repo + test command
+    pruned      BOOLEAN NOT NULL    -- Graph pruning used (set once Stage 4 verifies it)
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     time         TIMESTAMPTZ NOT NULL DEFAULT now(),
     analysis_id  TEXT        NOT NULL,   -- one whyagent invocation

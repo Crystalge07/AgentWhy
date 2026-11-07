@@ -8,7 +8,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..types import OTHER, PASS, TARGET_FAIL, RunResult, State, Step
@@ -27,13 +29,25 @@ def is_test_file(path: str, globs=DEFAULT_TEST_GLOBS) -> bool:
     return any(fnmatch.fnmatch(path, g) for g in globs)
 
 
+def vote(outcomes: list[str]) -> str:
+    """One verdict from n runs of the same state.
+
+    Any TARGET_FAIL means the bug is present: a failure is evidence, while passes never prove a flaky
+    bug absent. A majority vote would call the recorded cache bug (fails ~28% of runs) PASS almost
+    every time. PASS needs every run to pass; anything else (crashes, other failures) is OTHER.
+    """
+    if TARGET_FAIL in outcomes:
+        return TARGET_FAIL
+    return PASS if outcomes and all(o == PASS for o in outcomes) else OTHER
+
+
 def _git(*args, cwd="."):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
 
 
 class Replayer:
     def __init__(self, repo: str, steps: list[Step], test_cmd: str, target_sig: str | None = None,
-                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS, sandbox=None):
+                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS, sandbox=None, runlog=None, workers: int = 1):
         self.repo = os.path.abspath(repo)
         self.steps = {s.id: s for s in steps}
         self.test_cmd = test_cmd
@@ -43,13 +57,19 @@ class Replayer:
         self.cache: dict[str, list[RunResult]] = {}
         self.runs = 0
         self.sandbox = sandbox or LocalSandbox()
+        self.runlog = runlog  # tiger.RunLog or None
+        self.stage = "run"  # set by the caller; tags Tiger rows
+        self.workers = max(1, workers)  # sandboxes run in parallel by run_many
+        self._git_lock = threading.Lock()  # concurrent `git worktree add/remove` race on .git/worktrees
+        self._lock = threading.Lock()
         self.sandbox.prepare()
 
     def build(self, state: State) -> str:
         d = tempfile.mkdtemp(prefix="whyagent-")
-        # byte-exact checkout: agent edits use LF, so a CRLF checkout (autocrlf=true) would break them
-        _git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", d,
-             state.base_commit, cwd=self.repo)
+        with self._git_lock:
+            # byte-exact checkout: agent edits use LF, so a CRLF checkout (autocrlf=true) would break them
+            _git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", d,
+                 state.base_commit, cwd=self.repo)
         for sid in state.step_ids:
             s = self.steps[sid]
             if is_test_file(s.file, self.test_globs):
@@ -74,12 +94,14 @@ class Replayer:
         return d
 
     def teardown(self, d: str):
-        subprocess.run(["git", "worktree", "remove", "--force", d], cwd=self.repo, capture_output=True)
+        with self._git_lock:
+            subprocess.run(["git", "worktree", "remove", "--force", d], cwd=self.repo, capture_output=True)
         shutil.rmtree(d, ignore_errors=True)
 
     def _once(self, d: str) -> RunResult:
         t0 = time.time()
-        self.runs += 1
+        with self._lock:
+            self.runs += 1
         e = self.sandbox.exec(d, self.test_cmd, self.timeout)
         ms = int((time.time() - t0) * 1000)
         tail = (e.output or "")[-4000:]
@@ -94,17 +116,38 @@ class Replayer:
 
     def run(self, state: State, n: int = 1) -> list[RunResult]:
         k = state.key()
-        if k in self.cache and len(self.cache[k]) >= n:
-            return self.cache[k][:n]
+        with self._lock:
+            hit = self.cache.get(k)
+        if hit is not None and len(hit) >= n:
+            res = hit[:n]
+            self._log(k, res, cached=True)
+            return res
         d = self.build(state)
         try:
             res = [self._once(d) for _ in range(n)]
         finally:
             self.teardown(d)
-        self.cache[k] = res
+        with self._lock:
+            self.cache[k] = res
+        self._log(k, res)
         return res
 
+    def run_many(self, states: list[State], n: int = 1) -> list[list[RunResult]]:
+        """Test several states at once on up to `workers` sandboxes (one bisect round, say). Order is kept;
+        duplicate states run once. A state's n repeats stay sequential in one worktree."""
+        uniq = list({s.key(): s for s in states}.values())
+        with ThreadPoolExecutor(max_workers=min(self.workers, len(uniq)) or 1) as pool:
+            done = dict(zip([s.key() for s in uniq], pool.map(lambda s: self.run(s, n), uniq)))
+        return [done[s.key()] for s in states]
+
+    def outcomes(self, states: list[State], n: int = 1) -> list[str]:
+        return [vote([r.outcome for r in res]) for res in self.run_many(states, n)]
+
+    def _log(self, key: str, res: list[RunResult], cached: bool = False):
+        if self.runlog is not None:
+            for r in res:
+                self.runlog.log(self.stage, key, r.outcome, 0 if cached else r.duration_ms, r.tokens, cached=cached)
+
     def outcome(self, state: State, n: int = 1) -> str:
-        """Majority outcome across n runs."""
-        res = [r.outcome for r in self.run(state, n)]
-        return max(set(res), key=res.count)
+        """One outcome from n runs (see vote)."""
+        return vote([r.outcome for r in self.run(state, n)])

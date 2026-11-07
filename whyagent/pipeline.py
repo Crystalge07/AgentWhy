@@ -14,8 +14,8 @@ from typing import Callable
 from . import graph
 from .adapters.fidelity import Fidelity, apply
 from .bisect import (blame_hint, closure, confirm, ddmin, deps, line_owners, map_line, prefix_bisect_parallel,
-                     scan, sequential)
-from .replay import Replayer, is_test_file
+                     scan)
+from .replay import Replayer, is_test_file, vote
 from .types import OTHER, PASS, TARGET_FAIL, RootCause, State, Step
 
 
@@ -45,16 +45,7 @@ def trigger_line(trigger: str | None) -> str:
     return (lines[-1] if lines else "")[:160]
 
 
-def decide(outcomes: list[str]) -> str:
-    """One verdict from n runs of the same state.
-
-    Any TARGET_FAIL means the bug is present: a failure is evidence, while passes never prove a
-    flaky bug is absent. (A majority vote misses a test that fails 30% of the time almost always.)
-    PASS needs every run to pass; anything else is OTHER.
-    """
-    if TARGET_FAIL in outcomes:
-        return TARGET_FAIL
-    return PASS if outcomes and all(o == PASS for o in outcomes) else OTHER
+decide = vote  # one flaky-mode rule for everyone: replay.vote
 
 
 def _show(repo: str, rev: str, path: str) -> str | None:
@@ -82,23 +73,33 @@ def _step_dicts(steps: list[Step], read_parent: Callable[[str], str | None]) -> 
 
 
 def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, parent: str, head: str,
-                    test_cmd: str, target_sig: str, sandbox, opts: Options, report, say=print) -> RootCause | None:
+                    rp: Replayer, opts: Options, report, say=print, runlog=None) -> RootCause | None:
+    """`rp` must be built with `steps` and the target signature; B's stages 7-8 reuse it afterwards."""
     by_id = {s.id: s for s in steps}
     order = [s.id for s in steps if not is_test_file(s.file)]  # test edits are pinned, never bisected
     read_parent = lambda f: _show(repo, parent, f)
-    rp = Replayer(repo, steps, test_cmd, target_sig=target_sig, sandbox=sandbox)
+    test_cmd = rp.test_cmd
     failing_output = [""]
+
+    def record(stage: str, ids: list[int], res) -> str:
+        report.log_runs(stage, f"{parent[:7]}+{len(ids)} edits", res)
+        for r in res:
+            if r.outcome == TARGET_FAIL and not failing_output[0]:
+                failing_output[0] = r.output
+        return vote([r.outcome for r in res])
 
     def run(stage: str):
         def go(ids: list[int]) -> str:
-            state = State(parent, list(ids), head)
-            res = rp.run(state, opts.n)
-            report.log_runs(stage, f"{parent[:7]}+{len(ids)} edits", res)
-            for r in res:
-                if r.outcome == TARGET_FAIL and not failing_output[0]:
-                    failing_output[0] = r.output
-            outs = [r.outcome for r in res]
-            return decide(outs)
+            rp.stage = stage  # tags Tiger rows
+            return record(stage, ids, rp.run(State(parent, list(ids), head), opts.n))
+        return go
+
+    def run_many(stage: str):
+        """Several prefixes at once on B's worker pool (Replayer.run_many)."""
+        def go(prefixes: list[list[int]]) -> list[str]:
+            rp.stage = stage
+            results = rp.run_many([State(parent, list(p), head) for p in prefixes], opts.n)
+            return [record(stage, p, res) for p, res in zip(prefixes, results)]
         return go
 
     # Stage 2: the session as replayable edits + dependency map
@@ -163,6 +164,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                     verified = verdict == TARGET_FAIL
                     if verified:
                         kept = [i for i in order if i not in cands]
+                        if runlog is not None:
+                            runlog.set_pruned(True)  # Tiger chart: this analysis ran with pruning
                     report["pruning"] = {"pruned": cands if verified else [], "candidates": cands,
                                          "verified": verified, "source": graph.SOURCE,
                                          "runs_with": None, "runs_without": None}
@@ -173,20 +176,20 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                     say("pruning: every edit is reachable from the test, nothing to prune")
 
         # Stage 5: prefix bisect
-        def probe_run(ids):
-            r = run("bisect")(ids)
-            probes.append({"after_step": ids[-1] if ids else 0, "outcome": r})
-            return r
+        def probe_many(prefixes):
+            outs = run_many("bisect")(prefixes)
+            probes.extend({"after_step": p[-1] if p else 0, "outcome": r} for p, r in zip(prefixes, outs))
+            return outs
 
         runs_before = rp.runs
         if opts.scan:
-            res = scan(kept, sequential(probe_run))
+            res = scan(kept, probe_many)
             k = res["first"]
             if res["flips"]:
                 report.note(f"--scan: the test flips across the session; boundaries after edits "
                             f"{', '.join('#' + str(kept[b - 1]) for b in res['boundaries'])}. Using the first.")
         else:
-            k, _rounds = prefix_bisect_parallel(kept, sequential(probe_run), workers=opts.workers)
+            k, _rounds = prefix_bisect_parallel(kept, probe_many, workers=opts.workers)
         report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan}
         if k is None:
             say("bisect: inconclusive (every state around the boundary crashed or failed differently)")

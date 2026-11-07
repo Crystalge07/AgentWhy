@@ -59,8 +59,9 @@ def test_finds_real_cause_when_blame_points_at_a_decoy(tmp_path):
     assert head_run.outcome == TARGET_FAIL
     decoy_line = files["calc/core.py"].splitlines().index("    return result") + 1
     report = Report()
-    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, cmd, head_run.signature,
-                         LocalSandbox(), Options(line=f"calc/core.py:{decoy_line}"), report, say=lambda *_: None)
+    rp = Replayer(str(tmp_path), steps, cmd, target_sig=head_run.signature, sandbox=LocalSandbox())
+    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, rp,
+                         Options(line=f"calc/core.py:{decoy_line}"), report, say=lambda *_: None)
 
     assert rc is not None and rc.step.id == 3 and rc.step.file == "calc/config.py"
     assert report["blame_hint"]["step_ids"] == [4] and report["blame_hint"]["is_cause"] is False
@@ -69,7 +70,7 @@ def test_finds_real_cause_when_blame_points_at_a_decoy(tmp_path):
     assert report["bisect"]["boundary"] == 3
     assert [s.id for s in rc.edits_before] == [1, 2] and rc.before_state.step_ids == [1, 2]
     assert "assert 22 == 20" in rc.failing_output
-    assert report["runs_total"] <= 8
+    assert rp.runs <= 8
 
 
 def test_blame_hint_right_skips_bisect(tmp_path):
@@ -78,10 +79,22 @@ def test_blame_hint_right_skips_bisect(tmp_path):
     sig = Replayer(str(tmp_path), [], cmd).run(State(g, [], g))[0].signature
     line = files["calc/config.py"].splitlines().index("RATE = 11") + 1
     report = Report()
-    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, cmd, sig,
-                         LocalSandbox(), Options(line=f"calc/config.py:{line}"), report, say=lambda *_: None)
+    rp = Replayer(str(tmp_path), steps, cmd, target_sig=sig, sandbox=LocalSandbox())
+    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, rp,
+                         Options(line=f"calc/config.py:{line}"), report, say=lambda *_: None)
     assert rc.step.id == 3 and report["blame_hint"]["is_cause"]
-    assert "pruning" not in report and report["runs_total"] == 3
+    assert "pruning" not in report and rp.runs == 3
+
+
+def test_parallel_workers_give_the_same_answer(tmp_path):
+    parent, g, steps, files = make_repo(tmp_path)
+    cmd = f'"{sys.executable}" -m pytest -q -p no:cacheprovider tests/test_core.py::test_total'
+    sig = Replayer(str(tmp_path), [], cmd).run(State(g, [], g))[0].signature
+    rp = Replayer(str(tmp_path), steps, cmd, target_sig=sig, sandbox=LocalSandbox(), workers=3)
+    report = Report()
+    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=True), g, parent, g, rp,
+                         Options(workers=3, prune=False), report, say=lambda *_: None)
+    assert rc.step.id == 3 and report["confirm"]["outcome"] == PASS
 
 
 def test_decide_counts_any_target_failure():

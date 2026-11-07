@@ -49,11 +49,18 @@ class RunResult:
 
 @dataclass
 class RootCause:
-    """A -> B handoff: the proven guilty edit, plus what the rerun stage needs."""
-    step: Step                # guilty edit (reasoning, trigger, prompt, diff)
-    collateral: list[int]     # dependents reverted alongside it
-    before_state: State       # P(k-1): rerun start state
-    edits_before: list[Step]  # for the "summary of edits 1..k-1" prompt
+    """A -> B handoff: the proven guilty edit, and everything the reruns need."""
+    step: Step                      # guilty edit (reasoning, trigger, prompt, diff)
+    collateral: list[int]           # dependents reverted alongside it
+    before_state: State             # P(k-1): rerun start state
+    edits_before: list[Step]        # for the "summary of edits 1..k-1" prompt
     failing_output: str
-    head_state: State         # for "everything that passed at G still passes"
+    head_state: State               # for "everything that passed at G still passes"
     extra_causes: list[int] = field(default_factory=list)  # other edits from ddmin, if more than one cause
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RootCause":
+        return cls(step=Step(**d["step"]), collateral=list(d.get("collateral", [])),
+                   before_state=State(**d["before_state"]), edits_before=[Step(**s) for s in d["edits_before"]],
+                   failing_output=d.get("failing_output", ""), head_state=State(**d["head_state"]),
+                   extra_causes=list(d.get("extra_causes", [])))
