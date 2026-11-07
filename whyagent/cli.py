@@ -206,6 +206,37 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     return 0
 
 
+def stage_live(rc: RootCause, rp, args, report: Report, checkpoint: str | None) -> int:
+    """--live: diagnose → rule → approve → rewind → rerun → verify, instead of stages 7–8. Never touches Brain."""
+    from .live import LiveLoopError, LiveOptions, run_live
+    from .model import ModelError, make_model
+
+    try:
+        model = make_model(args.model, args.rerun_agent, local=args.sandbox == "local")
+        missing = model.missing_auth()
+        if missing:
+            raise LiveLoopError("diagnose", missing)
+    except ModelError as e:
+        print(f"\n✗ live loop failed at diagnose: {e}")
+        report.note(f"Live loop failed at diagnose: {e}")
+        return 2
+    except LiveLoopError as e:
+        print(f"\n✗ live loop failed at {e.stage}: {e.why}")
+        report.note(f"Live loop failed at {e.stage}: {e.why}")
+        return 2
+    opts = LiveOptions(test=args.test, instructions=args.instructions, runs=args.runs, yes=args.yes,
+                       workers=args.workers, target_runs=max(1, args.target_runs or 1), checkpoint=checkpoint)
+    print(f"\nlive loop: {' → '.join(['diagnose', 'rule', 'approve', 'rewind', 'rerun', 'verify'])}")
+    try:
+        report["live"] = run_live(rc, rp, model, opts)
+    except LiveLoopError as e:
+        print(f"\n✗ live loop failed at {e.stage}: {e.why}")
+        report["live"] = {"failed_stage": e.stage, "error": e.why}
+        report.note(f"Live loop failed at {e.stage}: {e.why}")
+        return 2
+    return 0 if report["live"]["after"]["outcome"] == "PASS" else 1
+
+
 def cmd_root_cause(args) -> int:
     """Dev entry for B: run stages 7-8 from a hard-coded RootCause JSON (the H16 gate)."""
     from .replay import Replayer
@@ -228,15 +259,27 @@ def cmd_root_cause(args) -> int:
     sandbox = _make_sandbox(args, head)
     if sandbox is None:
         return 2
-    runlog = RunLog(label=f"{Path.cwd().name}: {test}")
+    runlog = RunLog(label=f"{Path.cwd().name}: {test}", url="" if args.live else None)  # --live: no Tiger
     rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
-        code = stages_7_8(rc, rp, args, report, runlog)
+        if args.live:
+            args.test = test
+            code = stage_live(rc, rp, args, report, _saved_checkpoint(Path(args.root_cause)))
+        else:
+            code = stages_7_8(rc, rp, args, report, runlog)
     except Exception as e:  # noqa: BLE001 — write the report anyway
         code = _crashed(report, e)
     finally:
         runlog.close()
     return _finish(report, args, code)
+
+
+def _saved_checkpoint(rc_path: Path) -> str | None:
+    """The Entire checkpoint id from the report.json saved beside a root_cause.json, if there is one."""
+    try:
+        return json.loads(rc_path.with_name("report.json").read_text(encoding="utf-8")).get("commit", {}).get("checkpoint")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def _crashed(report: Report, e: Exception) -> int:
@@ -256,7 +299,7 @@ def cmd_analyze(args) -> int:
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line)
-    runlog = RunLog(label=f"{Path.cwd().name}: {args.test}")
+    runlog = RunLog(label=f"{Path.cwd().name}: {args.test}", url="" if args.live else None)  # --live: no Tiger
     try:
         return _analyze(args, head, good, report, runlog)
     except Exception as e:  # noqa: BLE001 — an error in any stage still writes the report
@@ -421,8 +464,10 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
         rc_path.parent.mkdir(parents=True, exist_ok=True)
         rc_path.write_text(json.dumps(asdict(rc), indent=2), encoding="utf-8")
         print(f"root cause handoff: {rc_path}")
-        # Stages 7–8 (B): lesson, then counterfactual reruns
-        code = stages_7_8(rc, rp2, args, report, runlog)
+        if args.live:  # diagnose → rule → approve → rewind → rerun → verify, instead of stages 7–8
+            code = stage_live(rc, rp2, args, report, cp)
+        else:  # Stages 7–8 (B): lesson, then counterfactual reruns
+            code = stages_7_8(rc, rp2, args, report, runlog)
         if args.trail:
             from .trail import post_finding
             try:
@@ -475,7 +520,20 @@ def main(argv=None) -> int:
                    help="post the root cause as a finding on this branch's Entire trail, with the revert as a suggested patch")
     p.add_argument("--lesson", help="test this lesson in the reruns instead of writing one with Gemini (Stage 7)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
+    p.add_argument("--live", action="store_true",
+                   help="after the root cause: write a rule from the reruns, approve it, add it to --instructions, "
+                        "rewind, rerun the agent with it and verify (replaces stages 7-8; never touches Brain or Tiger)")
+    p.add_argument("--yes", action="store_true", help="--live: approve the rule without asking")
+    p.add_argument("--instructions", default="AGENTS.md",
+                   help="--live: the agent instructions file the rule is added to (default AGENTS.md)")
+    p.add_argument("--model", choices=["gemini", "mock"],
+                   help="--live: model for the rule and the rerun agent (default $WHYAGENT_MODEL, else gemini; "
+                        "mock = canned responses for the seeded demo repo)")
     args = p.parse_args(argv)
+    if args.live and (args.trail or args.lesson or args.no_rerun):
+        p.error("--live can't be combined with --trail, --lesson or --no-rerun")
+    if (args.yes or args.model) and not args.live:
+        p.error("--yes and --model only apply to --live")
     if args.check_entire:
         return cmd_check_entire(args)
     if args.render:
