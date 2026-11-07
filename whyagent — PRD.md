@@ -211,9 +211,10 @@ class RunResult:
 | `replay/` | B | `build(state)`, `run(state, cmd, n)` | State → RunResults |
 | `bisect/` | A | `deps(steps)`, `prune(...)`, `prefix_bisect(...)`, `confirm(...)`, `ddmin(...)` | Steps + `run` → root-cause Step IDs |
 | `rerun/` | B | `make_lesson(step)`, `rerun(state, prompt, lesson, n)`, `decide(a, b)` | Root cause → lesson + verdict |
-| `cli.py` | A (stages 1–7), B (stages 0, 8) | `main()` | Wires stages 0–8, prints the report |
+| `entire.py` | A | `checkpoint_id(commit)`, `graph_reachable(test)`, `brain_lookup(files, error)`, `brain_save(lesson)` | Entire CLI/MCP → plain Python data |
+| `cli.py` | A (stages 1–6, report output), B (stages 0, 7, 8) | `main()` | Wires stages 0–8, prints the report |
 
-**Contract rule:** `bisect/` only ever talks to code through `replay.run`, so A can develop against a fake `run` that returns scripted outcomes before the sandbox exists.
+**Contract rules:** `bisect/` only ever talks to code through `replay.run`, so A can develop against a fake `run` that returns scripted outcomes before the sandbox exists. `rerun/` only ever talks to Brain through `entire.brain_lookup` / `entire.brain_save`, so B can develop against an in-memory stub before A wires the real Brain.
 
 ## Sandbox and execution environment
 
@@ -247,14 +248,14 @@ Entire is the main track; Gemini, Vultr and Tiger Data each do real work in the 
 
 | When | Track | Who | What |
 | --- | --- | --- | --- |
-| Now (H0–4) | Entire Sessions | A | Verify transcripts store edit old/new text, reasoning, tool outputs; start recording demo sessions. Biggest risk, everything depends on it |
+| Now (H0–4) | Entire Sessions | A | Verify transcripts store edit old/new text, reasoning, tool outputs; build the seeded repo so recording can start by H4. Biggest risk, everything depends on it |
 | Now (H0–4) | Entire Graph + Brain | A | 30-min access check only (CLI/MCP, what they return); build later |
 | Now (H0–4) | Vultr | B | Redeem credits (approval can lag), Ubuntu 24.04 VM 4 vCPU / 8 GB, install Docker. Run whyagent on the VM itself, since sandboxes bind-mount worktrees |
 | Now (H0–4) | Gemini | B | API key; confirm Gemini CLI headless one-shot with a turn limit. If awkward, pick the backup rerun agent now |
 | Now (H0–4) | Tiger Data | B | Create service, apply schema, `TIGER_DATABASE_URL`. ~10 min; logging from day one means chart data accumulates for free |
 | Later (H16–28) | Entire Graph | A | Pruning + verification run, after plain bisect works. First cut if behind |
 | Later (H16–28) | Vultr | B | Move the worker pool onto the VM once the Docker sandbox works locally |
-| Later (after verdicts) | Entire Brain | A | Save validated lessons and look up existing ones |
+| Later (H16–28) | Entire Brain | A builds, B calls | A wraps Brain as `brain_lookup` / `brain_save`; B calls them from Stage 7 (lookup) and Stage 8 (save on VALIDATED) |
 | Later (H28–40) | Tiger Data | B | Pruned vs unpruned chart from `runs_by_stage`; needs a `--no-prune` flag |
 | Stretch | Entire Trails | A | Open the fix as a trail, only with spare time |
 
@@ -290,12 +291,19 @@ The demo runs on a small Python repo with three bugs that real agents made durin
 
 ## Team split and 48-hour timeline
 
-Two owners, split along one seam: **A owns Entire + causal analysis** (what happened, which edit caused it), **B owns execution + agents** (run code and agents safely, fast, and measurably). They meet at exactly two interfaces: `replay.run(state, n) -> list[RunResult]` (B provides, A calls) and `RootCause` (A provides, B consumes for reruns). The two gates are hard checkpoints where both stop and integrate.
+Two owners, split along the pipeline's natural seam, with roughly equal remaining work (about 29 hours each, estimated below):
 
-| Owner | Owns |
-| --- | --- |
-| A — Entire + causal analysis | `adapters/` (Entire transcripts, session merge, hunks, replay fidelity, unattributed edit); `bisect/` (deps, Stage 3 blame hint, prefix bisect, confirm, ddmin, `--scan`); Entire Graph pruning; Entire Brain; seeded demo repo + recorded sessions; `cli.py` stages 1–7 |
-| B — Execution + agents | `replay/` Docker sandbox (HEAD image, network off, timeouts, pinned tests); worker pool, result cache, flaky-mode voting; Vultr VM; `rerun/` (Gemini lesson, headless rerun harness, tamper + regression checks, Fisher decision); Tiger Data logging + chart; `cli.py` stages 0 and 8 |
+- **A — Find the cause.** Entire data in, proven root-cause edit out (stages 1–6), plus the demo inputs that feed it.
+- **B — Prove the fix.** Run code and agents safely, fast and measurably (stage 0 and the sandbox under every stage), then write and validate the lesson (stages 7–8).
+
+They meet at exactly three interfaces: `replay.run(state, n) -> list[RunResult]` (B provides, A calls), `RootCause` (A provides, B consumes), and `entire.brain_lookup` / `brain_save` (A provides, B calls). The two gates are hard checkpoints where both stop and integrate.
+
+**Why this split.** Each half owns a complete vertical: A can reach "root cause found" on scenario 1 using only a fake `run`, and B can reach "lesson validated" on scenario 2 using only a hard-coded `RootCause`. Stage 7 (lesson writing) sits with B because the lesson only matters as input to the reruns that validate it; Brain stays with A because it's an Entire integration, and A owns everything that talks to Entire. Demo recording is split so each owner records the scenario their half needs first.
+
+| Owner | Owns | Est. hours left |
+| --- | --- | --- |
+| A — Find the cause | `adapters/`: session merge, write-hunk splitting, replay fidelity check, unattributed edit (5 h) · `bisect/`: Stage 3 edit-level blame hint, parallel prefix bisect over the pool, collateral, `--scan` (5 h) · Entire Graph pruning + verification run + `--no-prune` (4 h) · Entire Brain wrapper in `entire.py` (3 h) · seeded payments repo + pytest suite (4 h) · record scenarios 1 and 3 (4 h) · `cli.py` stages 1–6, `RootCause` type, final report output (4 h) | ~29 |
+| B — Prove the fix | `replay/` Docker sandbox: HEAD image, network off, timeouts, pinned tests (5 h) · worker pool, result cache, flaky-mode voting (4 h) · Vultr VM (1 h) · Tiger Data logging in `replay.run` + pruned-vs-unpruned chart (3 h) · Gemini setup + Stage 7 lesson generation (3 h) · `rerun/` headless rerun harness, tamper + regression checks (7 h) · record scenario 2 + rerun dry runs, pick demo scenario, pre-cache (4 h) · `cli.py` stages 0, 7, 8 (2 h) | ~29 |
 
 ```python
 @dataclass
@@ -308,14 +316,14 @@ class RootCause:              # A → B
     head_state: State         # for "everything that passed at G still passes"
 ```
 
-| Hours | A | B |
+| Hours | A — Find the cause | B — Prove the fix |
 | --- | --- | --- |
-| 0–4 | Verify Entire transcript format + Graph/Brain access; start recording sessions | Docker sandbox; Gemini CLI headless check; Vultr VM; Tiger Data service |
-| 4–16 | Stages 2–3 wired on real sessions | Rerun harness, lesson generation, Tiger logging in `replay.run` |
+| 0–4 | Verify Entire transcript format + Graph/Brain access; build the seeded payments repo + tests | Vultr credits + VM; Tiger Data service; Gemini key + headless CLI check; Docker sandbox locally |
+| 4–16 | Record scenarios 1 and 3; session merge, replay fidelity, Stage 3 hint; `RootCause` type | Record scenario 2; Stage 7 lesson generation; rerun harness; Tiger logging in `replay.run` |
 | **H16 gate** | Scenario 1 runs from start to root cause | Hard-coded scenario 2 runs to a verdict |
-| 16–28 | Graph pruning, ddmin, Brain | Worker pool on Vultr, cache, tamper/regression checks |
+| 16–28 | Graph pruning + verification run, ddmin wiring, Brain wrapper | Worker pool on Vultr, flaky-mode voting, tamper/regression checks, Brain calls in stages 7–8 |
 | **H28 gate** | Full pipeline on all 3 scenarios | |
-| 28–40 | Flaky mode, report polish, `--scan` | Rerun dry runs, pick demo scenario, pre-cache runs, Tiger chart |
+| 28–40 | `--scan`, `--no-prune`, report output polish | Rerun dry runs, pick demo scenario, pre-cache runs, Tiger chart |
 | 40–48 | Rehearse together, run the demo on the Vultr VM | |
 
 If the H28 gate slips, cut Graph pruning (A) and the parallel pool (B) first. The pipeline still proves root cause without them.
