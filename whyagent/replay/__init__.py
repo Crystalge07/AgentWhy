@@ -82,14 +82,15 @@ class Replayer:
         self.runs += 1
         e = self.sandbox.exec(d, self.test_cmd, self.timeout)
         ms = int((time.time() - t0) * 1000)
+        tail = (e.output or "")[-4000:]
         if e.timed_out:
-            return RunResult(OTHER, "timeout", -1, ms)
+            return RunResult(OTHER, "timeout", -1, ms, output=tail)
         sig = signature(e.output)
         if e.exit_code == 0:
-            return RunResult(PASS, sig, 0, ms)
+            return RunResult(PASS, sig, 0, ms, output=tail)
         if self.target_sig is None or sig == self.target_sig:
-            return RunResult(TARGET_FAIL, sig, e.exit_code, ms)
-        return RunResult(OTHER, sig, e.exit_code, ms)
+            return RunResult(TARGET_FAIL, sig, e.exit_code, ms, output=tail)
+        return RunResult(OTHER, sig, e.exit_code, ms, output=tail)
 
     def run(self, state: State, n: int = 1) -> list[RunResult]:
         k = state.key()

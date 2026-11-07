@@ -115,8 +115,31 @@ def cmd_analyze(args) -> int:
         print(f"commit {guilty[:7]} has no Entire checkpoint → human-written, stopping")
         return _finish(report, args, 0)
     print(f"checkpoint: {cp}")
-    print("stages 2–8: not wired yet (see adapters/, bisect/, rerun/)")
-    print(f"test runs used: {rp.runs}")
+
+    # Stages 2–6 (A): session -> replayable edits -> blame hint -> pruning -> bisect -> confirm
+    from dataclasses import asdict
+
+    from .adapters import load_replayable
+    from .pipeline import Options, find_root_cause
+
+    try:
+        steps, fid = load_replayable(guilty)
+    except Exception as e:  # noqa: BLE001 — report it, don't crash
+        print(f"session: couldn't load the Entire session ({e})")
+        report.note(f"Couldn't load the Entire session for checkpoint {cp}: {e}")
+        return _finish(report, args, 2)
+    parent = _git("rev-parse", f"{guilty}^")
+    opts = Options(line=args.line, n=n, prune=not args.no_prune, scan=args.scan, workers=args.workers)
+    rc = find_root_cause(".", steps, fid, guilty, parent, head, args.test, target_sig, sandbox, opts, report)
+    print(f"test runs used: {rp.runs + report.get('runs_total', 0)}")
+    if rc is None:
+        return _finish(report, args, 1)
+    rc_path = Path(args.report).with_name("root_cause.json")
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    rc_path.write_text(json.dumps(asdict(rc), indent=2), encoding="utf-8")
+    print(f"root cause handoff: {rc_path}")
+    if not args.no_rerun:
+        print("stages 7–8 (lesson + counterfactual reruns): B's rerun/, not wired yet")
     return _finish(report, args, 0)
 
 
@@ -138,6 +161,9 @@ def main(argv=None) -> int:
     p.add_argument("--sandbox", choices=["docker", "local"], default="docker",
                    help="run tests in throwaway Docker containers (default) or directly on the host")
     p.add_argument("--no-rerun", action="store_true", help="stop after root cause")
+    p.add_argument("--no-prune", action="store_true", help="skip Graph pruning (for the pruned-vs-blind comparison)")
+    p.add_argument("--scan", action="store_true", help="test every prefix instead of bisecting (sessions < 20 edits)")
+    p.add_argument("--workers", type=int, default=1, help="prefixes tested per bisect round (default 1)")
     p.add_argument("--check-entire", action="store_true", help="smoke-test the Entire connection and exit")
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")

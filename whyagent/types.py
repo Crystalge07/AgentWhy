@@ -44,6 +44,7 @@ class RunResult:
     exit_code: int
     duration_ms: int
     tokens: int | None = None
+    output: str = ""  # tail of the test's stdout+stderr (for the failing output in reports and lessons)
 
 
 @dataclass
