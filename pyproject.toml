@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whyagent"
+version = "0.1.0"
+description = "git blame for agent decisions: find which agent edit broke a test, prove it, and validate the lesson."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+whyagent = "whyagent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["whyagent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
