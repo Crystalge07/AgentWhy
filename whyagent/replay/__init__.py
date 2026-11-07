@@ -27,7 +27,7 @@ def is_test_file(path: str, globs=DEFAULT_TEST_GLOBS) -> bool:
 
 
 def _git(*args, cwd="."):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", check=True).stdout
 
 
 class Replayer:
@@ -76,7 +76,7 @@ class Replayer:
         t0 = time.time()
         self.runs += 1
         try:
-            p = subprocess.run(self.test_cmd, shell=True, cwd=d, capture_output=True, text=True,
+            p = subprocess.run(self.test_cmd, shell=True, cwd=d, capture_output=True, encoding="utf-8", errors="replace",
                                timeout=self.timeout)
         except subprocess.TimeoutExpired:
             return RunResult(OTHER, "timeout", -1, int((time.time() - t0) * 1000))
