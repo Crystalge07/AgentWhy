@@ -122,3 +122,58 @@ def test_modifies_ignores_commits_viewers_and_heredocs():
     assert not _modifies(commit, f)                          # git add / commit, and the message, don't count
     assert not _modifies("cat payments/config.py && git diff payments/config.py", f)
     assert _modifies("echo 'X = 1' >> payments/config.py", f)
+
+
+def _shell_cmd(command, reasoning="r"):
+    return {"session_id": "s1", "ts": "t", "command": command, "cwd": "/repo", "reasoning": reasoning,
+            "trigger": None, "prompt": "p"}
+
+
+def _leftovers(base, commit):
+    files = sorted(set(base) | set(commit))
+    return reconcile([], base.get, commit.get, files, lambda f: False)
+
+
+def test_shell_attribution_prefers_the_command_that_wrote_the_content():
+    from whyagent.adapters.fidelity import attribute_shell_edits
+
+    # the sed makes the change; a later `git diff`/`git add` and a restore of another file also name it
+    shell = [_shell_cmd("sed -i 's/^MAX_RETRIES = 3$/MAX_RETRIES = 1/' payments/config.py", "lower retries"),
+             _shell_cmd("python -m pytest -q && git checkout -- payments/config.py.bak", "check"),
+             _shell_cmd("echo '# tuned' >> payments/config.py", "comment")]
+    steps, fid = _leftovers({"payments/config.py": "MAX_RETRIES = 3\n"}, {"payments/config.py": "MAX_RETRIES = 1\n"})
+    attribute_shell_edits(steps, fid, shell)
+    (s,) = steps
+    assert s.kind == "shell" and s.command.startswith("sed -i") and s.reasoning == "lower retries"
+    assert fid.shell_guessed == []
+
+
+def test_shell_attribution_splits_hunks_between_commands():
+    from whyagent.adapters.fidelity import attribute_shell_edits
+
+    base = {"c.py": "A = 1\n" + "x\n" * 10 + "B = 1\n"}
+    commit = {"c.py": "A = 2\n" + "x\n" * 10 + "B = 2\n"}
+    shell = [_shell_cmd("sed -i 's/A = 1/A = 2/' c.py", "a"), _shell_cmd("sed -i 's/B = 1/B = 2/' c.py", "b")]
+    steps, fid = _leftovers(base, commit)
+    attribute_shell_edits(steps, fid, shell)
+    assert [s.reasoning for s in steps] == ["a", "b"] and fid.shell_guessed == []
+
+
+def test_shell_attribution_flags_a_guess_when_no_command_shows_the_content():
+    from whyagent.adapters.fidelity import attribute_shell_edits
+
+    shell = [_shell_cmd("python scripts/migrate.py config.py", "first"),
+             _shell_cmd("python scripts/tidy.py config.py", "second")]
+    steps, fid = _leftovers({"config.py": "a\n"}, {"config.py": "b\n"})
+    attribute_shell_edits(steps, fid, shell)
+    (s,) = steps
+    assert s.kind == "shell" and s.reasoning == "second"  # last one wins...
+    assert fid.shell_guessed == [s.id]                    # ...but it's flagged as a guess
+
+
+def test_shell_attribution_one_candidate_is_not_a_guess():
+    from whyagent.adapters.fidelity import attribute_shell_edits
+
+    steps, fid = _leftovers({"config.py": "a\n"}, {"config.py": "b\n"})
+    attribute_shell_edits(steps, fid, [_shell_cmd("python scripts/migrate.py config.py")])
+    assert steps[0].kind == "shell" and fid.shell_guessed == []

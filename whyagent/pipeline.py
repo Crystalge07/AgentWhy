@@ -69,8 +69,20 @@ def _step_dicts(steps: list[Step], read_parent: Callable[[str], str | None]) -> 
             pass
         out.append({"id": s.id, "file": s.file, "line": line, "kind": s.kind, "old_text": s.old_text,
                     "new_text": s.new_text, "reasoning": s.reasoning, "trigger": s.trigger,
-                    "command": s.command or None})
+                    "command": s.command or None, "test": is_test_file(s.file)})
     return out
+
+
+def blind_bisect_runs(order: list[int], root: int, workers: int) -> int:
+    """States a bisect over all of `order` would test, given that P(j) fails iff it contains `root`."""
+    tested = [0]
+
+    def fake(prefixes):
+        tested[0] += len(prefixes)
+        return [TARGET_FAIL if root in p else PASS for p in prefixes]
+
+    prefix_bisect_parallel(order, fake, workers=workers)
+    return tested[0]
 
 
 def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, parent: str, head: str,
@@ -108,7 +120,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     report["session"] = {"id": ", ".join(sessions) or "?", "agent": next((s.agent for s in steps if s.kind != "unattributed"), "?"),
                          "prompt": next((s.prompt for s in steps if s.prompt), ""), "replay_matches": fid.matches,
                          "unattributed": bool(fid.unattributed), "unattributed_ids": fid.unattributed,
-                         "shell_ids": fid.shell,
+                         "shell_ids": fid.shell, "shell_guessed": fid.shell_guessed,
                          "dropped": fid.dropped, "steps": _step_dicts(steps, read_parent)}
     say(f"session: {report['session']['id']} · {len(order)} edits · "
         + ("replay matches commit ✓" if fid.matches else
@@ -116,6 +128,10 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                f"{len(fid.shell)} edit(s) made by the agent's shell commands" if fid.shell else "",
                f"{len(fid.unattributed)} unattributed edit(s)" if fid.unattributed else "") if p)
            + f" ({', '.join(fid.files)})"))
+    if fid.shell_guessed:
+        report.note("Several agent shell commands could have made edit(s) "
+                    + ", ".join(f"#{i}" for i in fid.shell_guessed)
+                    + "; credited to the last one. Check its command and reasoning before trusting them.")
     if not order:
         report.note("The session has no edits outside test files, so there is nothing to bisect.")
         return None
@@ -202,6 +218,19 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             return None
         root = kept[k - 1]
         say(f"bisect: {len(kept)} edits → {rp.runs - runs_before} test runs → first failing prefix at edit #{root}")
+        report["bisect"]["edits"] = len(kept)
+        if not any(p["after_step"] == root for p in probes):
+            # The boundary is the last kept edit: bisect assumed P(n) fails. Test it so "fails right after
+            # the edit" is a real run (a cache hit when pruning verified this same state).
+            probes.append({"after_step": root, "outcome": run("bisect")(kept[:k]), "boundary_check": True})
+        pr = report.get("pruning")
+        if pr and pr.get("verified") and not opts.scan:
+            # Savings: the verification run proved the pruned edits don't matter, so a blind bisect over every
+            # edit would see P(j) fail exactly when the prefix contains the root. Simulate it to count its runs.
+            pr["runs_with"] = (1 + sum(not p.get("boundary_check") for p in probes)) * opts.n  # + verification
+            pr["runs_without"] = blind_bisect_runs(order, root, opts.workers) * opts.n
+            pr["runs_without_simulated"] = True
+            say(f"pruning savings: {pr['runs_with']} runs with pruning vs {pr['runs_without']} for a blind bisect")
 
         # Stage 6: confirm from the end, ddmin if more than one cause
         ok, coll = confirm(kept, root, dep, run("confirm"))

@@ -87,6 +87,8 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
             lesson, source = hit["text"], "brain"
     except Exception as e:  # noqa: BLE001
         print(f"lesson: Brain lookup failed ({e}), writing a new one")
+    if getattr(args, "lesson", None):
+        lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip Gemini
     if not lesson:
         try:
             lesson = make_lesson(rc)
@@ -96,7 +98,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
             report.note(f"Lesson generation failed: {msg}")
             return 1
     hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
-    print(f'lesson: "{lesson}"' + (" (from Brain)" if source == "brain" else "") + hidden)
+    print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)"}.get(source, "") + hidden)
     report["lesson"] = {"text": lesson, "source": source}
     if args.no_rerun:
         return 0
@@ -324,6 +326,7 @@ def main(argv=None) -> int:
                    help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
     p.add_argument("--chart", action="store_true", help="write the Tiger Data pruning chart (.whyagent/chart.html)")
+    p.add_argument("--lesson", help="test this lesson in the reruns instead of writing one with Gemini (Stage 7)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     args = p.parse_args(argv)
     if args.check_entire:
