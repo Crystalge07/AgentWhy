@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from ..types import OTHER, PASS, TARGET_FAIL, RunResult, State, Step
+from .sandbox import DockerSandbox, LocalSandbox, SandboxError, docker_available  # noqa: F401
 
 DEFAULT_TEST_GLOBS = ["tests/*", "test_*.py", "*/test_*.py", "conftest.py", "*/conftest.py"]
 _NOISE = re.compile(r"0x[0-9a-f]+|\d+(\.\d+)?|(/[\w.\-]+)+|\d{4}-\d\d-\d\dT[\d:.]+", re.I)
@@ -32,7 +33,7 @@ def _git(*args, cwd="."):
 
 class Replayer:
     def __init__(self, repo: str, steps: list[Step], test_cmd: str, target_sig: str | None = None,
-                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS):
+                 timeout: int = 120, test_globs=DEFAULT_TEST_GLOBS, sandbox=None):
         self.repo = os.path.abspath(repo)
         self.steps = {s.id: s for s in steps}
         self.test_cmd = test_cmd
@@ -41,6 +42,8 @@ class Replayer:
         self.test_globs = test_globs
         self.cache: dict[str, list[RunResult]] = {}
         self.runs = 0
+        self.sandbox = sandbox or LocalSandbox()
+        self.sandbox.prepare()
 
     def build(self, state: State) -> str:
         d = tempfile.mkdtemp(prefix="whyagent-")
@@ -75,18 +78,16 @@ class Replayer:
     def _once(self, d: str) -> RunResult:
         t0 = time.time()
         self.runs += 1
-        try:
-            p = subprocess.run(self.test_cmd, shell=True, cwd=d, capture_output=True, encoding="utf-8", errors="replace",
-                               timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            return RunResult(OTHER, "timeout", -1, int((time.time() - t0) * 1000))
-        sig = signature(p.stdout + p.stderr)
+        e = self.sandbox.exec(d, self.test_cmd, self.timeout)
         ms = int((time.time() - t0) * 1000)
-        if p.returncode == 0:
+        if e.timed_out:
+            return RunResult(OTHER, "timeout", -1, ms)
+        sig = signature(e.output)
+        if e.exit_code == 0:
             return RunResult(PASS, sig, 0, ms)
         if self.target_sig is None or sig == self.target_sig:
-            return RunResult(TARGET_FAIL, sig, p.returncode, ms)
-        return RunResult(OTHER, sig, p.returncode, ms)
+            return RunResult(TARGET_FAIL, sig, e.exit_code, ms)
+        return RunResult(OTHER, sig, e.exit_code, ms)
 
     def run(self, state: State, n: int = 1) -> list[RunResult]:
         k = state.key()

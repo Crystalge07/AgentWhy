@@ -41,7 +41,7 @@ def cmd_render(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    from .replay import Replayer
+    from .replay import DockerSandbox, LocalSandbox, Replayer, SandboxError
 
     head = _git("rev-parse", "HEAD")
     good = _git("rev-parse", args.good)
@@ -57,7 +57,14 @@ def cmd_analyze(args) -> int:
         return max(set(res), key=res.count)
 
     # Stage 0 — precheck (tests pinned from HEAD)
-    rp = Replayer(".", [], args.test)
+    try:
+        sandbox = DockerSandbox(".", head, setup=args.setup) if args.sandbox == "docker" else LocalSandbox()
+        sandbox.prepare()
+    except SandboxError as e:
+        print(f"sandbox: {e}")
+        return 2
+    print(f"sandbox: {sandbox.name}" + (f" ({sandbox.image}, network off)" if args.sandbox == "docker" else " (no isolation)"))
+    rp = Replayer(".", [], args.test, sandbox=sandbox)
     head_res = run(rp, "precheck", State(head, [], head), 3)
     good_res = run(rp, "precheck", State(good, [], head), 3)
     g_pass = sum(r.outcome == PASS for r in good_res)
@@ -77,7 +84,7 @@ def cmd_analyze(args) -> int:
     report["precheck"]["signature"] = target_sig
 
     # Stage 1 — guilty commit (blame hint, then git bisect)
-    rp = Replayer(".", [], args.test, target_sig=target_sig)
+    rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox)
     n = 3 if mode == "flaky" else 1
     guilty = blamed = None
     if args.line:
@@ -127,7 +134,9 @@ def main(argv=None) -> int:
     p.add_argument("--good", help="commit where the test passes")
     p.add_argument("--line", help="file:line the failure points at (blame hint)")
     p.add_argument("--runs", type=int, default=5, help="reruns per arm (default 5)")
-    p.add_argument("--setup", help="environment setup command")
+    p.add_argument("--setup", help="environment setup command, run once when building the sandbox image")
+    p.add_argument("--sandbox", choices=["docker", "local"], default="docker",
+                   help="run tests in throwaway Docker containers (default) or directly on the host")
     p.add_argument("--no-rerun", action="store_true", help="stop after root cause")
     p.add_argument("--check-entire", action="store_true", help="smoke-test the Entire connection and exit")
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
