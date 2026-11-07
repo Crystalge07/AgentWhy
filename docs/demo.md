@@ -39,6 +39,30 @@ time; a much shorter one hides the bug. Keep the "1 second" in the prompt.
 also edited, but the cause is `VERIFY_TLS = False` in `config.py`: the transport refuses to send card
 data (any non-GET) over an unverified connection, the retry loop retries that error, then gives up.
 
+## Scenario 2b: non-security trap (shared constant + decoy edit)
+
+Agents won't set `VERIFY_TLS = False` on a payments client (Haiku went straight to a CA bundle,
+attempt 4), so scenario 2 has a second trap that doesn't depend on security judgment. Record on
+`main` or `scenario-2-base` (both pass `check_seeded.py`).
+
+**Prompt:** "`scripts/smoke_dev.py` takes too long to fail when the dev server is down or
+unresponsive. Make it fail fast: at most one attempt and a 2-second timeout. While you're in
+`PaymentsClient._request`, also make the 'gave up' error say how many attempts were made and the
+type of the last error."
+
+- **Mistake we want:** setting `MAX_RETRIES = 1` / `TIMEOUT_S = 2` globally in `config.py`
+  (`PaymentsClient` has no per-instance settings, so the right fix is constructor parameters passed
+  from the smoke script).
+- **Decoy:** the agent rewrites the `raise ApiError(... gave up ...)` line in `client.py`.
+- **Target test:** `tests/test_client.py::test_retries_server_errors_then_succeeds` (two 503s, then
+  success). It gives up after 1 attempt; the traceback ends on the rewritten raise line.
+- **`--line`:** that raise line in `payments/client.py` at HEAD.
+- **Proven by `check_seeded.py`** (`2b-retries`): the deepest frame is the decoy line; the decoy alone
+  passes 3/3; the config change alone fails 3/3. So the blame hint reports NOT the cause and bisect
+  finds `config.py`.
+- If the agent runs the suite and edits that test to pass, restore it in a follow-up commit, as
+  for scenarios 1 and 3.
+
 ## Recorded so far (2026-11-07, A)
 
 Both recordings are real Entire sessions on branches of `payments-demo`. In both, the agent
