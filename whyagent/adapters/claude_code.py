@@ -1,7 +1,6 @@
 """Parse Claude Code JSONL transcripts into ordered Steps."""
 from __future__ import annotations
 
-import difflib
 import json
 import re
 from pathlib import PurePosixPath, PureWindowsPath
@@ -42,24 +41,11 @@ def _text_of(content) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _hunks(old: str, new: str) -> list[tuple[str, str]]:
-    """Split a full-file write into (old_text, new_text) hunks."""
-    if not old:
-        return [("", new)]
-    a, b = old.splitlines(keepends=True), new.splitlines(keepends=True)
-    out = []
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
-        if tag != "equal":
-            out.append(("".join(a[i1:i2]), "".join(b[j1:j2])))
-    return out
-
-
 def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
     steps: list[Step] = []
     prompt = ""
     reasoning: str | None = None
     trigger: str | None = None
-    files: dict[str, str] = {}  # last known content, for Write hunking
     seen: set[str] = set()  # Entire transcripts can repeat a tool_use record; apply each id once
     cwd: str | None = None
     ts = ""
@@ -102,14 +88,15 @@ def parse_claude_code(transcript: str, session_id: str = "") -> list[Step]:
                         seen.add(c["id"])
                     inp = c.get("input", {})
                     f = inp.get("file_path", "")
+                    # "write" (full file) and "edit_all" (replace_all) are turned into unique hunks
+                    # later by adapters.fidelity.split_writes, once the real file content is known
                     if c["name"] == "Edit":
-                        add(f, "edit", inp.get("old_string", ""), inp.get("new_string", ""))
+                        kind = "edit_all" if inp.get("replace_all") else "edit"
+                        add(f, kind, inp.get("old_string", ""), inp.get("new_string", ""))
                     elif c["name"] == "MultiEdit":
                         for e in inp.get("edits", []):
-                            add(f, "edit", e.get("old_string", ""), e.get("new_string", ""))
+                            kind = "edit_all" if e.get("replace_all") else "edit"
+                            add(f, kind, e.get("old_string", ""), e.get("new_string", ""))
                     else:
-                        new = inp.get("content", "")
-                        for old_h, new_h in _hunks(files.get(f, ""), new):
-                            add(f, "write_hunk", old_h, new_h)
-                        files[f] = new
+                        add(f, "write", "", inp.get("content", ""))
     return steps

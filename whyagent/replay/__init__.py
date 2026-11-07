@@ -47,21 +47,23 @@ class Replayer:
 
     def build(self, state: State) -> str:
         d = tempfile.mkdtemp(prefix="whyagent-")
-        _git("worktree", "add", "--detach", d, state.base_commit, cwd=self.repo)
+        # byte-exact checkout: agent edits use LF, so a CRLF checkout (autocrlf=true) would break them
+        _git("-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", d,
+             state.base_commit, cwd=self.repo)
         for sid in state.step_ids:
             s = self.steps[sid]
             if is_test_file(s.file, self.test_globs):
                 continue
             p = Path(d) / os.path.relpath(s.file, self.repo) if os.path.isabs(s.file) else Path(d) / s.file
             p.parent.mkdir(parents=True, exist_ok=True)
-            text = p.read_text(encoding="utf-8") if p.exists() else ""
+            text = p.read_bytes().decode("utf-8") if p.exists() else ""  # bytes: no newline translation
             if s.old_text == "":
                 text = text + s.new_text if text else s.new_text
             elif text.count(s.old_text) >= 1:
                 text = text.replace(s.old_text, s.new_text, 1)
             else:
                 raise ValueError(f"step {sid}: old_text not found in {s.file}")
-            p.write_text(text, encoding="utf-8")
+            p.write_bytes(text.encode("utf-8"))
         # pin test files from pinned_tests_from
         for f in _git("ls-tree", "-r", "--name-only", state.pinned_tests_from, cwd=self.repo).splitlines():
             if is_test_file(f, self.test_globs):

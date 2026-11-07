@@ -30,6 +30,35 @@ def load_session(commit: str, cwd: str = ".") -> list[Step]:
     return merge_sessions(per_session)
 
 
+def _git_file(rev: str | None, path: str, cwd: str) -> str | None:
+    if rev is None:
+        return None
+    import subprocess
+
+    p = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, capture_output=True)
+    return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None
+
+
+def load_replayable(commit: str, cwd: str = ".", is_test=None):
+    """Commit -> (Steps that replay G's parent exactly into G, Fidelity). PRD Stage 2."""
+    import subprocess
+
+    from ..replay import is_test_file
+    from .fidelity import reconcile, split_writes
+
+    is_test = is_test or is_test_file
+
+    def git(*a):
+        p = subprocess.run(["git", *a], cwd=cwd, capture_output=True, encoding="utf-8", errors="replace")
+        return p.stdout.strip() if p.returncode == 0 else None
+
+    sha = git("rev-parse", commit)
+    parent = git("rev-parse", f"{sha}^")  # None for a root commit
+    changed = (git("diff", "--name-only", parent or "4b825dc642cb6eb9a060e54bf8d69288fbee4904", sha) or "").split()
+    steps = split_writes(load_session(sha, cwd), lambda f: _git_file(parent, f, cwd))
+    return reconcile(steps, lambda f: _git_file(parent, f, cwd), lambda f: _git_file(sha, f, cwd), changed, is_test)
+
+
 def merge_sessions(per_session: list[list[Step]]) -> list[Step]:
     """Interleave concurrent sessions' edits by timestamp and renumber 1..n.
 

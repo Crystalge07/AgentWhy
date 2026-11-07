@@ -45,6 +45,25 @@ def test_build_preserves_non_ascii_source(tmp_path):
         rp.teardown(d)
 
 
+def test_build_ignores_autocrlf(tmp_path):
+    """Agent edits use \\n; a CRLF checkout (core.autocrlf=true, git's Windows default) must not break them."""
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.email", "t@t")
+    git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "app.py").write_bytes(b"def f():\n    return 1\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-qm", "base")
+    git(tmp_path, "config", "core.autocrlf", "true")
+    base = git(tmp_path, "rev-parse", "HEAD")
+    steps = [Step(1, "s", "claude-code", "app.py", "edit", "def f():\n    return 1", "def f():\n    return 2")]
+    rp = Replayer(str(tmp_path), steps, "true")
+    d = rp.build(State(base, [1], base))
+    try:
+        assert (tmp_path.__class__(d) / "app.py").read_bytes() == b"def f():\n    return 2\n"
+    finally:
+        rp.teardown(d)
+
+
 import pytest
 
 from whyagent.replay import DockerSandbox, docker_available
