@@ -149,6 +149,11 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time…")
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog)
     a_all, b_all = rr.run(rc, lesson, args.runs)
+    if rr.excluded:
+        print(f"rerun: {len(rr.excluded)} test(s) added by the session aren't required of reruns")
+        report.note("Reruns weren't required to pass these tests, which pass at the guilty commit but not before "
+                    "the session (written for code the original agent invented): " + ", ".join(rr.excluded[:8])
+                    + (" …" if len(rr.excluded) > 8 else ""))
     if rr.blocked:
         print(f"rerun: blocked agent network access to {', '.join(rr.blocked)}")
         report.note(f"Reruns: the agent tried to reach {', '.join(rr.blocked)}; blocked (only the model API is allowed).")

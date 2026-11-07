@@ -214,23 +214,26 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                             f"{', '.join('#' + str(kept[b - 1]) for b in res['boundaries'])}. Using the first.")
         else:
             k, _rounds = prefix_bisect_parallel(kept, probe_many, workers=opts.workers)
-        report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan}
+        report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan,
+                            "edits": len(kept), "kept": kept}
         if k is None:
             say("bisect: inconclusive (every state around the boundary crashed or failed differently)")
             report.note("Bisect inconclusive: the states around the boundary were all OTHER.")
             return None
         root = kept[k - 1]
+        searched = len(probes)  # states the search itself tested, before the explicit boundary checks
+        # Bisect can infer P(k-1) = PASS and P(k) = TARGET_FAIL from the endpoints without running them.
+        # Run them explicitly so the report shows both facts as test results (usually cache hits).
+        have = {p["after_step"] for p in probes}
+        missing = [kept[:i] for i in (k - 1, k) if (kept[i - 1] if i else 0) not in have]
+        if missing:
+            probe_many(missing)
         say(f"bisect: {len(kept)} edits → {rp.runs - runs_before} test runs → first failing prefix at edit #{root}")
-        report["bisect"]["edits"] = len(kept)
-        if not any(p["after_step"] == root for p in probes):
-            # The boundary is the last kept edit: bisect assumed P(n) fails. Test it so "fails right after
-            # the edit" is a real run (a cache hit when pruning verified this same state).
-            probes.append({"after_step": root, "outcome": run("bisect")(kept[:k]), "boundary_check": True})
         pr = report.get("pruning")
         if pr and pr.get("verified") and not opts.scan:
             # Savings: the verification run proved the pruned edits don't matter, so a blind bisect over every
             # edit would see P(j) fail exactly when the prefix contains the root. Simulate it to count its runs.
-            pr["runs_with"] = (1 + sum(not p.get("boundary_check") for p in probes)) * opts.n  # + verification
+            pr["runs_with"] = (1 + searched) * opts.n  # + the verification run; search states only, like the blind count
             pr["runs_without"] = blind_bisect_runs(order, root, opts.workers) * opts.n
             pr["runs_without_simulated"] = True
             say(f"pruning savings: {pr['runs_with']} runs with pruning vs {pr['runs_without']} for a blind bisect")
@@ -255,7 +258,8 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     else:
         extra = []
         report["confirm"] = {"step_id": root, "collateral": collateral, "outcome": PASS, "ddmin": None}
-        report["bisect"] = {"probes": probes, "boundary": root, "scan": False}
+        report["bisect"] = {"probes": probes, "boundary": root, "scan": False, "edits": len(order), "kept": order,
+                            "via": "blame_hint"}  # no bisect ran: Stage 3 already tested the boundary
 
     s = by_id[root]
     idx = order.index(root)
