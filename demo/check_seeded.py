@@ -4,9 +4,9 @@ Plants a hand-written version of each scenario's mistake in a throwaway copy of 
 checks that it fails the target test in the way the demo needs. The seeded repo itself never
 contains these patches, so recorded agents can't see them.
 
-    python demo/check_seeded.py ../payments-demo [--ref main] [--flaky-runs 30]
+    python demo/check_seeded.py ../payments-api-client [--ref main] [--flaky-runs 30]
 
-It checks a clean snapshot of --ref (default main), whatever branch payments-demo has checked out.
+It checks a clean snapshot of --ref (default main), whatever branch payments-api-client has checked out.
 `--ref WORKTREE` checks the checked-out files instead.
 """
 from __future__ import annotations

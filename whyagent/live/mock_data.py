@@ -1,4 +1,4 @@
-"""Canned model responses for the seeded payments-demo repo (WHYAGENT_MODEL=mock).
+"""Canned model responses for the seeded payments-api-client repo (WHYAGENT_MODEL=mock).
 
 Each scenario: how to recognise its root cause, the rule "the model" writes, the good fix the mock agent
 makes (applied to the rewound state, before the guilty edit), and which no-rule reruns make the good fix

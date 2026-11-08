@@ -99,7 +99,7 @@ class MockAgent(Agent):
 
 
 class MockModel(Model):
-    """Canned responses for the seeded payments-demo scenarios (see live/mock_data.py)."""
+    """Canned responses for the seeded payments-api-client scenarios (see live/mock_data.py)."""
     name = "mock"
 
     def __init__(self, local: bool = False):
