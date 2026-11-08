@@ -712,6 +712,7 @@ function renderPanel() {
   if (!S.meta) {  // before Play: just the goal
     $("#pname").textContent = "The goal"; $("#pstep").textContent = "";
     say(pb, "goal", GOAL_TEXT);
+    shownPanel = null;  // the first real event clears this
     return;
   }
   if (S.meta) {
