@@ -34,7 +34,7 @@
   .top .sp { flex: 1; }
   .ctl { display: flex; gap: 4px; background: var(--node); border: 1px solid var(--edge); border-radius: 10px; padding: 4px; }
   .ctl button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
-  .ctl button.on { background: var(--node-2); color: var(--ink); }
+  .ctl button.on { background: var(--brand); color: #fff; }
   .ctl button:hover { color: var(--ink); }
 
   /* ------------------------------------------------ canvas */
@@ -194,9 +194,8 @@
   <span class="title" id="title"></span>
   <span class="sp"></span>
   <span class="ctl hidden" id="ctl">
-    <button id="pause" title="Space">Pause</button>
+    <button id="pause" class="on" title="Space">Play</button>
     <button id="restart" title="R">Restart</button>
-    <button class="spd" data-s="1">1×</button><button class="spd on" data-s="2">2×</button><button class="spd" data-s="4">4×</button>
   </span>
 </header>
 <div id="view"><div id="world"><svg id="edges"></svg></div></div>
@@ -728,7 +727,7 @@ function render() {
 const parts = location.pathname.split("/").filter(Boolean);
 const ID = parts[1] || null;
 const REPLAY = new URLSearchParams(location.search).has("replay");
-let speed = 2, paused = false, timer = null, queue = [], qi = 0;
+let paused = true, timer = null, queue = [], qi = 0;
 
 function reset() { S = fresh(); shownPanel = null; $("#pb").innerHTML = ""; buildCanvas(); render(); }
 function handle(ev) { apply(ev); render(); }
@@ -747,18 +746,19 @@ async function startReplay() {
   if (data.error) { $("#pname").textContent = data.error; return; }
   queue = data.events;
   $("#ctl").classList.remove("hidden");
-  document.querySelectorAll(".spd").forEach(b => b.onclick = () => { speed = Number(b.dataset.s); document.querySelectorAll(".spd").forEach(x => x.classList.toggle("on", x === b)); });
-  const togglePause = () => { paused = !paused; $("#pause").textContent = paused ? "Play" : "Pause"; if (!paused) step(); };
-  const restart = () => { clearTimeout(timer); qi = 0; reset(); paused = false; $("#pause").textContent = "Pause"; step(); };
+  // Starts paused: the presenter presses Play. Restart goes back to the start and waits for Play again.
+  const label = () => { $("#pause").textContent = !paused ? "Pause" : qi ? "Continue" : "Play"; $("#pause").classList.toggle("on", paused); };
+  const togglePause = () => { paused = !paused; label(); if (!paused) step(); };
+  const restart = () => { clearTimeout(timer); qi = 0; reset(); paused = true; label(); };
   $("#pause").onclick = togglePause; $("#restart").onclick = restart;
   document.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); togglePause(); } if (e.key === "r") restart(); });
-  step();
+  label();
 }
 function step() {
   clearTimeout(timer);
   if (paused || qi >= queue.length) return;
   const ev = queue[qi];
-  timer = setTimeout(() => { qi++; handle(ev); step(); }, (ev.delay || 0) * 1000 / speed);
+  timer = setTimeout(() => { qi++; handle(ev); step(); }, (ev.delay || 0) * 1000);
 }
 
 async function pickRun() {
