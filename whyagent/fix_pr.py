@@ -1,4 +1,5 @@
-"""--pr: when Stage 8 VALIDATES a lesson, open a GitHub PR with a verified fix and the rule in AGENTS.md.
+"""The fix PR, opened after every analysis that finds a root cause (--no-pr turns it off). When Stage 8
+VALIDATES a lesson, it carries a passing rerun's fix and the rule in AGENTS.md; otherwise the revert, no rule.
 
 The fix is the work of a rerun that passed *with* the lesson. Reruns start just before the guilty edit, so
 their diff can't go onto HEAD as it is: we rebuild the rerun's final tree, diff it against the guilty commit
@@ -198,15 +199,26 @@ def pr_body(rc: RootCause, report: dict, fix: Fix, rule: str, instructions: str)
                      f"edit on, in: {', '.join(f'`{f}`' for f in fix.files)}.")
     else:
         lines.append(f"Reverts the guilty edit in `{s.file}`.")
-    lines += ["", f"Verified at this PR's base: {fix.detail}.", "",
-              "## The rule", "", f"Added to `{instructions}` so agents in this repo follow it from now on "
-              f"(and `CLAUDE.md` imports `{instructions}`, so Claude Code reads it too):", "",
-              f"> {rule}", ""]
-    if rr.get("verdict"):
+    lines += ["", f"Verified at this PR's base: {fix.detail}.", ""]
+    if rule:
+        lines += ["## The rule", "", f"Added to `{instructions}` so agents in this repo follow it from now on "
+                  f"(and `CLAUDE.md` imports `{instructions}`, so Claude Code reads it too):", "", f"> {rule}", ""]
+    else:
+        lesson = (report.get("lesson") or {}).get("text")
+        verdict = rr.get("verdict")
+        lines += ["## No rule added", "",
+                  ("The lesson below wasn't validated by the counterfactual reruns"
+                   + (f" ({verdict})" if verdict else " (they didn't run)") + f", so it isn't added to `{instructions}`:")
+                  if lesson else "No lesson was tested, so no rule is added."]
+        if lesson:
+            lines += ["", f"> {lesson}"]
+        lines.append("")
+    if rr.get("verdict") and rr.get("p") is not None:
         p = rr.get("p")
-        lines.append(f"Validated by counterfactual reruns ({rr.get('agent')}): without the rule {a.count('PASS')}/"
+        lines.append(("Validated by counterfactual reruns" if rule else "Counterfactual reruns")
+                     + f" ({rr.get('agent')}): without the rule {a.count('PASS')}/"
                      f"{len(a)} passed, with it {b.count('PASS')}/{len(b)}" + (f" (Fisher p = {p:.3f})" if p is not None else "") + ".")
-    lines += ["", "---", "Opened by agentwhy `--pr`. Review the diff before merging: the tests check what they check."]
+    lines += ["", "---", "Opened by agentwhy. Review the diff before merging: the tests check what they check."]
     return "\n".join(lines)
 
 
@@ -234,10 +246,11 @@ def open_pr(rp, rc: RootCause, fix: Fix, d: str, rule: str, report: dict, instru
         raise FixError("the analyzed repo is on a detached HEAD; check out the branch the PR should target")
     s = rc.step
     test = (report.get("meta") or {}).get("test", "")
-    append_rule(Path(d) / instructions, rule, provenance(test, s.session_id, s.id, s.file))
-    _git(d, "add", "--", instructions)
-    if claude_imports(Path(d), instructions):
-        _git(d, "add", "--", "CLAUDE.md")
+    if rule:  # no rule unless the reruns validated it
+        append_rule(Path(d) / instructions, rule, provenance(test, s.session_id, s.id, s.file))
+        _git(d, "add", "--", instructions)
+        if claude_imports(Path(d), instructions):
+            _git(d, "add", "--", "CLAUDE.md")
     aid = ((report.get("meta") or {}).get("analysis_id") or "")[:6] or os.urandom(3).hex()
     branch = f"agentwhy/fix-{Path(s.file).stem}-{aid}"
     m = re.search(r"\S+::\S+", test)
@@ -245,8 +258,8 @@ def open_pr(rp, rc: RootCause, fix: Fix, d: str, rule: str, report: dict, instru
     title = f"agentwhy: fix {tname} (broken by agent edit #{s.id} in {s.file})"
     hooks = tempfile.mkdtemp(prefix="whyagent-nohooks-")  # the analyzed repo's hooks aren't ours to trigger
     try:
-        _git(d, "-c", f"core.hooksPath={hooks}", "commit", "-q", "-m", title, "-m",
-             f"Rule added to {instructions}: {rule}")
+        _git(d, "-c", f"core.hooksPath={hooks}", "commit", "-q", "-m", title,
+             *(["-m", f"Rule added to {instructions}: {rule}"] if rule else []))
         _git(d, "-c", f"core.hooksPath={hooks}", "push", "-q", name, f"HEAD:refs/heads/{branch}")
     finally:
         os.rmdir(hooks)

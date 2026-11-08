@@ -75,42 +75,36 @@ def check_connection(cwd: str = ".") -> list[tuple[str, bool, str]]:
 
 # --- Brain: validated lessons ----------------------------------------------------------------
 # Entire Brain has no CLI or API access for Entire-native repos (checked 2026-11-07), so lessons
-# live in a JSON-lines file behind this interface (the PRD's fallback). B's rerun stage only talks
+# live in a `lessons` table in Tiger Data behind this interface, shared by the whole team. B's rerun stage only talks
 # to Brain through brain_lookup / brain_save, so the backend can change without touching it.
 
-BRAIN_SOURCE = "lesson store: local file + Tiger Data when TIGER_DATABASE_URL is set (Entire Brain has no CLI access)"
+BRAIN_SOURCE = "lesson store: Tiger Data, shared by the team (Entire Brain has no CLI access)"
 LESSONS_DDL = "CREATE TABLE IF NOT EXISTS lessons (saved_at TIMESTAMPTZ NOT NULL DEFAULT now(), rec JSONB NOT NULL)"
 
 
-def _tiger_lessons(rec: dict | None = None, timeout: int = 10, quiet: bool = False) -> list[dict]:
-    """Shared Brain: validated lessons in Tiger Data, so every teammate's machine sees them.
-    Saves `rec` when given; returns all lessons. A no-op ([]) when Tiger is unset or unreachable."""
+def _tiger_lessons(timeout: int = 10, quiet: bool = False) -> list[dict]:
+    """Brain: every validated lesson in Tiger Data, the one shared store, so every teammate's machine sees the
+    same lessons (and a deleted one is gone for everyone). [] when Tiger is unset or unreachable."""
     import os
     import sys
 
     if not os.environ.get("TIGER_DATABASE_URL"):
+        if not quiet:
+            print("brain: TIGER_DATABASE_URL isn't set, so there are no lessons to look up", file=sys.stderr)
         return []
     try:
         from .tiger import connect
 
         with connect(timeout=timeout) as conn:
             conn.execute(LESSONS_DDL)
-            if rec is not None:
-                conn.execute("INSERT INTO lessons (rec) VALUES (%s::jsonb)", (json.dumps(rec),))
-                return []
             return [r[0] for r in conn.execute("SELECT rec FROM lessons ORDER BY saved_at").fetchall()]
-    except Exception as e:  # never let the shared store break an analysis; the local file still works
+    except Exception as e:  # a lookup must never break an analysis: no lesson, write a new one
         if not quiet:
             print(f"brain: Tiger lessons unavailable ({type(e).__name__}: {e})", file=sys.stderr)
         return []
+
+
 _EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Warning|Failure))\b:?\s*(.*)$")
-
-
-def brain_path() -> "Path":
-    import os
-    from pathlib import Path
-
-    return Path(os.environ.get("WHYAGENT_BRAIN") or Path.home() / ".whyagent" / "brain.jsonl")
 
 
 def error_key(output: str) -> tuple[str, str]:
@@ -125,18 +119,8 @@ def error_key(output: str) -> tuple[str, str]:
 
 
 def _brain_records(timeout: int = 10, quiet: bool = False) -> list[dict]:
-    """Local lessons plus shared (Tiger) ones, oldest first, each lesson once."""
-    p = brain_path()
-    out = []
-    if p.exists():
-        for line in p.read_text(encoding="utf-8").splitlines():
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    seen = {(r.get("text"), r.get("saved_at")) for r in out}
-    shared = [r for r in _tiger_lessons(timeout=timeout, quiet=quiet) if (r.get("text"), r.get("saved_at")) not in seen]
-    return sorted(out + shared, key=lambda r: r.get("saved_at") or "")
+    """Every validated lesson in Tiger Data, oldest first. Nothing is read from local files."""
+    return sorted(_tiger_lessons(timeout=timeout, quiet=quiet), key=lambda r: r.get("saved_at") or "")
 
 
 def brain_lookup(files: list[str], error: str) -> dict | None:
@@ -181,7 +165,7 @@ def repo_name(cwd: str = ".") -> str:
 
 
 def brain_save(lesson: dict) -> dict:
-    """Store a lesson. Only lessons that the counterfactual reruns VALIDATED are accepted.
+    """Store a lesson in Tiger Data (never locally). Raises if Tiger is unset or the write fails. Only lessons that the counterfactual reruns VALIDATED are accepted.
 
     Required keys: text, files, failing_output, verdict ("VALIDATED"), p. Optional: repo (owner/name),
     checkpoint, session_id, agent, step_id, runs ({"a": [...], "b": [...]}).
@@ -197,9 +181,13 @@ def brain_save(lesson: dict) -> dict:
     rec = {k: v for k, v in lesson.items() if k != "failing_output"}
     rec.update(error_type=etype, error_msg=emsg,
                saved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-    p = brain_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec) + "\n")
-    _tiger_lessons(rec)  # share it with the team
+    import os
+
+    if not os.environ.get("TIGER_DATABASE_URL"):
+        raise RuntimeError("Brain lives in Tiger Data only; set TIGER_DATABASE_URL to save lessons")
+    from .tiger import connect
+
+    with connect(timeout=10) as conn:  # errors propagate: a lesson that wasn't saved must say so
+        conn.execute(LESSONS_DDL)
+        conn.execute("INSERT INTO lessons (rec) VALUES (%s::jsonb)", (json.dumps(rec),))
     return rec

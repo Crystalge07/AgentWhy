@@ -143,7 +143,19 @@ def _make_sandbox(args, head: str):
 
 
 def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
-    """Stage 7 (lesson) and Stage 8 (counterfactual reruns). rp must know rc's steps."""
+    """Stage 7 (lesson) and Stage 8 (counterfactual reruns), then the fix PR (on unless --no-pr), however
+    stages 7-8 ended: with the rerun's fix and the rule when the lesson VALIDATED, else with the revert."""
+    out: dict = {}
+    code = _lesson_and_reruns(rc, rp, args, report, runlog, out)
+    if getattr(args, "pr", False):
+        stage_pr(rc, rp, out.get("rr"), out.get("b_all") or [], out.get("lesson") or "", out.get("verdict"),
+                 args, report)
+    return code
+
+
+def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dict) -> int:
+    """Stages 7-8. rp must know rc's steps. Fills `out` with lesson, rr, b_all and verdict as they become
+    known, for the PR step."""
     from .model import model_name
     from .rerun import Reruns, agent_by_name, decide, make_lesson
     from .rerun.lesson import GENERATORS, generator_missing
@@ -190,6 +202,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
                                    "claude": " (written by Claude)", "gemini": " (written by Gemini)"}.get(source, "")
           + hidden)
     report["lesson"] = {"text": lesson, "source": source}
+    out["lesson"] = lesson
     events.stage("lesson", "done", text=lesson, source=source)
     if args.no_rerun:
         events.stage("rerun", "skip", why="--no-rerun")
@@ -218,7 +231,8 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
     events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson)
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
-    rr.capture_diff = bool(getattr(args, "pr", False))  # --pr builds its fix from a passing rerun's diff
+    rr.capture_diff = bool(getattr(args, "pr", False))  # the PR builds its fix from a passing rerun's diff
+    out["rr"] = rr
     a_all, b_all = rr.run(rc, lesson, args.runs)
     if (args.rerun_agent == "auto" and agent.name == "gemini-cli" and rr._abort
             and providers.claude_configured()):
@@ -229,6 +243,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, restart=True)
         rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
         rr.capture_diff = bool(getattr(args, "pr", False))
+        out["rr"] = rr
         a_all, b_all = rr.run(rc, lesson, args.runs)
     if rr.excluded:
         print(f"rerun: {len(rr.excluded)} test(s) added by the session aren't required of reruns")
@@ -244,7 +259,9 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     # OTHER (agent never really ran: quota, auth, crash) is never evidence
     a = [r for r in a_all if r.outcome != "OTHER"]
     b = [r for r in b_all if r.outcome != "OTHER"]
+    out["b_all"] = b_all
     if not a or not b:
+        out["verdict"] = "INCONCLUSIVE"
         why = next(r.detail for r in a_all + b_all if r.outcome == "OTHER")
         print(f"rerun: INCONCLUSIVE, no valid runs in {'both arms' if not a and not b else 'one arm'} ({why})")
         report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
@@ -253,6 +270,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         return 1
     ap, bp = sum(r.outcome == "PASS" for r in a), sum(r.outcome == "PASS" for r in b)
     verdict, p = decide(ap, len(a), bp, len(b))
+    out["verdict"] = verdict
     dropped = len(a_all) + len(b_all) - len(a) - len(b)
     saved = False
     if verdict == "VALIDATED" and source != "brain":
@@ -271,22 +289,29 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
                        "p": p, "verdict": verdict, "saved_to_brain": saved,
                        "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
     events.stage("rerun", "done", verdict=verdict, p=p, a=f"{ap}/{len(a)}", b=f"{bp}/{len(b)}")
-    if getattr(args, "pr", False):
-        stage_pr(rc, rp, rr, b_all, lesson, verdict, args, report)
     return 0
 
 
-def stage_pr(rc: RootCause, rp, rr, b_all, lesson: str, verdict: str, args, report: Report) -> None:
-    """--pr: open a GitHub PR with a fix verified at HEAD and the rule in --instructions. Never fails the analysis."""
+def stage_pr(rc: RootCause, rp, rr, b_all, lesson: str, verdict: str | None, args, report: Report) -> None:
+    """Open a GitHub PR with a fix verified at HEAD, after every analysis that found a root cause (--no-pr
+    turns it off). A VALIDATED lesson brings the passing rerun's fix and the rule in --instructions; otherwise
+    the PR reverts the guilty edit and adds no rule. Never fails the analysis."""
+    from types import SimpleNamespace
+
     from .fix_pr import FixError, make_pr
 
-    if verdict != "VALIDATED":
-        print(f"pr: skipped, the lesson wasn't validated ({verdict})")
-        report["pr"] = {"opened": False, "why": f"lesson {verdict}, not VALIDATED"}
-        return
-    print(f"pr: finding a fix that passes at HEAD, rule → {args.instructions}…")
+    validated = verdict == "VALIDATED"
+    rule = lesson if validated else ""
+    if rr is None:  # no reruns ran (--no-rerun, no lesson, no agent auth): verify the revert with the test alone
+        rr = SimpleNamespace(target_runs=max(1, getattr(args, "target_runs", None) or 1), _baseline=None,
+                             suite_cmd=None)
+    if validated:
+        print(f"pr: finding a fix that passes at HEAD, rule → {args.instructions}…")
+    else:
+        print(f"pr: lesson {verdict or 'not tested'}, so no rule; opening a PR that reverts the guilty edit…")
     try:
-        pr = make_pr(rp, rr, rc, b_all, lesson, report, instructions=args.instructions, remote=args.pr_remote)
+        pr = make_pr(rp, rr, rc, b_all if validated else [], rule, report, instructions=args.instructions,
+                     remote=args.pr_remote)
     except FixError as e:
         print(f"pr: not opened, {e}")
         report.note(f"PR not opened: {e}")
@@ -301,7 +326,7 @@ def stage_pr(rc: RootCause, rp, rr, b_all, lesson: str, verdict: str, args, repo
     if pr.get("warning"):
         print(f"pr: note: {pr['warning']}")
         report.note(f"PR: {pr['warning']}")
-    report["pr"] = {"opened": True, **pr}
+    report["pr"] = {"opened": True, "rule": bool(rule), **pr}
 
 
 def stage_live(rc: RootCause, rp, args, report: Report, checkpoint: str | None) -> int:
@@ -338,7 +363,7 @@ def stage_live(rc: RootCause, rp, args, report: Report, checkpoint: str | None) 
 def cmd_brain() -> int:
     """--brain: every validated lesson, oldest first, with its evidence."""
     recs = entire._brain_records()
-    where = str(entire.brain_path()) + (" + Tiger Data" if os.environ.get("TIGER_DATABASE_URL") else "")
+    where = "Tiger Data" if os.environ.get("TIGER_DATABASE_URL") else "TIGER_DATABASE_URL not set"
     print(f"{len(recs)} validated lesson(s) ({where})")
     for r in recs:
         runs = r.get("runs") or {}
@@ -682,12 +707,14 @@ def main(argv=None) -> int:
     p.add_argument("--yes", action="store_true", help="--live: approve the rule without asking")
     p.add_argument("--instructions", default="AGENTS.md",
                    help="--live / --pr: the agent instructions file the rule is added to (default AGENTS.md)")
-    p.add_argument("--pr", action="store_true",
-                   help="if Stage 8 VALIDATES the lesson: open a GitHub PR with a fix verified at HEAD (a passing "
-                        "with-lesson rerun's work, else the revert of the guilty edit) and the rule added to "
-                        "--instructions. Needs a github.com remote and `gh` logged in")
+    p.add_argument("--pr", dest="pr", action="store_true", default=True,
+                   help="(the default) after the root cause, open a GitHub PR with a fix verified at HEAD: if Stage 8 "
+                        "VALIDATES the lesson, a passing with-lesson rerun's work (else the revert of the guilty edit) "
+                        "plus the rule in --instructions; otherwise the revert, with no rule. Needs a github.com "
+                        "remote and `gh` logged in")
+    p.add_argument("--no-pr", dest="pr", action="store_false", help="don't open a PR")
     p.add_argument("--pr-remote", help="--pr: the git remote to push the PR branch to (default: the first github.com one)")
-    p.add_argument("--brain", action="store_true", help="list the validated lessons (local file + Tiger Data) and exit")
+    p.add_argument("--brain", action="store_true", help="list the validated lessons (Tiger Data) and exit")
     p.add_argument("--rules", action="store_true",
                    help="print the validated rules as Markdown for an agent's context, skipping ones already in "
                         "--instructions, and exit (for a SessionStart hook; prints nothing if there are none)")
@@ -709,10 +736,10 @@ def main(argv=None) -> int:
         i = shown.index("--id")
         del shown[i:i + 2]
     args.command = "agentwhy " + shlex.join(shown)  # shown on the report
-    if args.live and (args.trail or args.lesson or args.no_rerun or args.pr):
+    if args.live and (args.trail or args.lesson or args.no_rerun or "--pr" in shown):
         p.error("--live can't be combined with --trail, --lesson, --no-rerun or --pr")
-    if args.pr and args.no_rerun:
-        p.error("--pr needs the reruns (it only opens a PR for a VALIDATED lesson)")
+    if args.live:
+        args.pr = False  # the live loop writes its rule to --instructions itself
     if (args.yes or args.model == "mock") and not args.live:
         p.error("--yes and --model mock only apply to --live")
     from .model import DEFAULT_AGENT, model_name

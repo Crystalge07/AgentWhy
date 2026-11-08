@@ -153,3 +153,42 @@ def test_claude_imports(tmp_path):
     assert fix_pr.claude_imports(tmp_path, "AGENTS.md")
     assert (tmp_path / "CLAUDE.md").read_text() == "# Project\nnotes\n\n@AGENTS.md\n"
     assert not fix_pr.claude_imports(tmp_path, "CLAUDE.md")              # the rules file is CLAUDE.md itself
+
+
+def test_unvalidated_lesson_still_opens_a_revert_pr_without_a_rule(repo, monkeypatch):
+    """No reruns at all (rr is the stand-in stage_pr builds): the PR reverts the guilty edit and adds no rule."""
+    r, remote, rc = repo
+    rp = Replayer(str(r), rc.edits_before + [rc.step], f"{PY} tests/check.py", sandbox=LocalSandbox())
+    rr = types.SimpleNamespace(target_runs=1, _baseline=None, suite_cmd=None)
+    monkeypatch.setattr(fix_pr, "github_remote", lambda repo, prefer=None: ("origin", "o/r"))
+    report = {"meta": {"test": f"{PY} tests/check.py", "analysis_id": "fff000"},
+              "lesson": {"text": "Never disable TLS verification."},
+              "rerun": {"agent": "fake", "a": ["FAIL"] * 5, "b": ["FAIL"] * 5, "p": 1.0, "verdict": "REJECTED"}}
+    seen = {}
+    pr = fix_pr.make_pr(rp, rr, rc, [], "", report, gh=_gh(seen), log=lambda m: None)
+
+    br = pr["branch"]
+    assert pr["fix"] == "revert"
+    assert git(remote, "show", f"{br}:app.py") == "# config v2\nVERIFY = True\nOTHER = 1"
+    assert git(remote, "diff", "--name-only", f"{br}^", br).split() == ["app.py"]  # no AGENTS.md / CLAUDE.md
+    assert "## No rule added" in seen["body"] and "(REJECTED)" in seen["body"]
+    assert "Never disable TLS verification." in seen["body"] and "## The rule" not in seen["body"]
+    assert "Validated by" not in seen["body"]
+
+
+def test_pr_is_on_by_default(monkeypatch):
+    import dotenv
+
+    from whyagent import cli
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)  # keep real keys out of the test env
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_analyze", lambda args: seen.setdefault("args", args) and 0)
+    cli.main(["--test", "x", "--good", "y"])
+    assert seen["args"].pr is True
+    seen.clear()
+    cli.main(["--test", "x", "--good", "y", "--no-pr"])
+    assert seen["args"].pr is False
+    seen.clear()
+    cli.main(["--test", "x", "--good", "y", "--no-rerun"])  # used to be an error with --pr
+    assert seen["args"].pr is True
