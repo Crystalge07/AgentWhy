@@ -657,6 +657,12 @@ def main(argv=None) -> int:
                    help="print the validated rules as Markdown for an agent's context, skipping ones already in "
                         "--instructions, and exit (for a SessionStart hook; prints nothing if there are none)")
     p.add_argument("--rules-limit", type=int, default=10, help="--rules: at most this many, newest first (default 10)")
+    p.add_argument("--install-hook", action="store_true",
+                   help="add a Claude Code SessionStart hook that runs --rules, so every session (any repo) starts with "
+                        "your validated rules; to the settings in --claude-config, $CLAUDE_CONFIG_DIR or ~/.claude")
+    p.add_argument("--uninstall-hook", action="store_true",
+                   help="remove that hook (do this before recording a demo session: the rules would steer the agent)")
+    p.add_argument("--claude-config", metavar="DIR", help="--install-hook / --uninstall-hook: Claude Code config dir")
     p.add_argument("--model", choices=["gemini", "claude", "mock"],
                    help="who writes the lesson (Stage 7) or, with --live, the rule (default $WHYAGENT_MODEL, else "
                         "gemini). claude = `claude -p` with CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, model "
@@ -680,6 +686,16 @@ def main(argv=None) -> int:
         return cmd_check_entire(args)
     if args.brain:
         return cmd_brain()
+    if args.install_hook or args.uninstall_hook:
+        from .rules import claude_settings_path, hook_command, install_hook, uninstall_hook
+        path = claude_settings_path(args.claude_config)
+        if args.uninstall_hook:
+            print(f"hook: {'removed from' if uninstall_hook(path) else 'not found in'} {path}")
+            return 0
+        print(f"hook: {install_hook(path)} in {path}\n  SessionStart → {hook_command()}\n"
+              "  New Claude Code sessions start with your validated rules. Before recording a demo session, run "
+              "whyagent --uninstall-hook (the rules would steer the agent away from the mistake).")
+        return 0
     if args.rules:
         from .rules import rules_markdown
         text = rules_markdown(instructions=args.instructions, limit=args.rules_limit)

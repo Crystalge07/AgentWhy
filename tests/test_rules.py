@@ -34,3 +34,25 @@ def test_repo_name(tmp_path):
     assert entire.repo_name(str(tmp_path)) == "Crystalge07/whyagent-demo"
     git("remote", "add", "origin", "entire://aws-us-east-2.entire.io/et/agentwhy/whyagent-demo")
     assert entire.repo_name(str(tmp_path)) == "agentwhy/whyagent-demo"
+
+
+def test_install_and_uninstall_hook(tmp_path):
+    import json
+
+    from whyagent.rules import claude_settings_path, install_hook, uninstall_hook
+
+    path = claude_settings_path(str(tmp_path))
+    path.write_text(json.dumps({"model": "opus", "hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+    assert install_hook(path, '"/py" -m whyagent.cli --rules') == "added"
+    assert install_hook(path, '"/py" -m whyagent.cli --rules') == "unchanged"
+    assert install_hook(path, '"/other/py" -m whyagent.cli --rules') == "updated"
+    d = json.loads(path.read_text())
+    cmds = [h["command"] for g in d["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert d["model"] == "opus" and cmds == ["echo hi", '"/other/py" -m whyagent.cli --rules']
+    assert uninstall_hook(path) and not uninstall_hook(path)
+    assert json.loads(path.read_text()) == {"model": "opus", "hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": "echo hi"}]}]}}
+    fresh = claude_settings_path(str(tmp_path / "new"))
+    assert install_hook(fresh) == "added" and "whyagent.cli --rules" in fresh.read_text()
+    assert uninstall_hook(fresh) and json.loads(fresh.read_text()) == {}

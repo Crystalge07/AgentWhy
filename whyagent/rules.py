@@ -38,3 +38,79 @@ def rules_markdown(instructions: str = "AGENTS.md", limit: int = 10, cwd: str = 
         if len(out) >= max(1, limit):
             break
     return (HEADER + "\n" + "\n".join(out)) if out else ""
+
+
+# ---------------------------------------------------------------- the SessionStart hook
+
+def claude_settings_path(config_dir: str | None = None) -> Path:
+    """Claude Code's user settings: --claude-config, else $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    import os
+
+    return Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+
+
+def hook_command() -> str:
+    """This install's interpreter running `--rules`. Works on Mac, Linux and Windows (forward slashes are fine
+    in both Git Bash and cmd), and doesn't depend on whyagent being on PATH."""
+    import sys
+
+    return f'"{Path(sys.executable).as_posix()}" -m whyagent.cli --rules'
+
+
+def _is_ours(h: dict) -> bool:
+    c = h.get("command", "")
+    return "whyagent.cli --rules" in c or "whyagent --rules" in c
+
+
+def _load(path: Path) -> dict:
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() and path.read_text(encoding="utf-8").strip() else {}
+
+
+def _save(path: Path, data: dict) -> None:
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.whyagent-tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def install_hook(path: Path, command: str | None = None, timeout: int = 10) -> str:
+    """Add (or update) the SessionStart hook that runs `--rules`. Returns "added", "updated" or "unchanged"."""
+    command = command or hook_command()
+    data = _load(path)
+    groups = data.setdefault("hooks", {}).setdefault("SessionStart", [])
+    for g in groups:
+        for h in g.get("hooks", []):
+            if _is_ours(h):
+                if h.get("command") == command and h.get("timeout") == timeout:
+                    return "unchanged"
+                h.update(type="command", command=command, timeout=timeout)
+                _save(path, data)
+                return "updated"
+    groups.append({"hooks": [{"type": "command", "command": command, "timeout": timeout}]})
+    _save(path, data)
+    return "added"
+
+
+def uninstall_hook(path: Path) -> bool:
+    """Remove our SessionStart hook (other hooks stay). True if one was removed."""
+    data = _load(path)
+    groups = (data.get("hooks") or {}).get("SessionStart")
+    if not groups:
+        return False
+    removed = False
+    for g in groups:
+        keep = [h for h in g.get("hooks", []) if not _is_ours(h)]
+        removed |= len(keep) != len(g.get("hooks", []))
+        g["hooks"] = keep
+    data["hooks"]["SessionStart"] = [g for g in groups if g.get("hooks")]
+    if not data["hooks"]["SessionStart"]:
+        del data["hooks"]["SessionStart"]
+    if not data["hooks"]:
+        del data["hooks"]
+    if removed:
+        _save(path, data)
+    return removed

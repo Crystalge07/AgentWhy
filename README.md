@@ -65,6 +65,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
 | `--brain` | List every validated lesson (local `~/.whyagent/brain.jsonl` + Tiger Data) with its evidence, and exit |
 | `--rules` | Print the validated rules as Markdown for an agent's context (newest first, max `--rules-limit`, default 10; skips rules already in `--instructions`; Tiger timeout 3 s). Meant for a Claude Code `SessionStart` hook so every session, in any repo, starts with your account-wide rules |
+| `--install-hook` / `--uninstall-hook` | Add or remove the Claude Code `SessionStart` hook that runs `--rules`, in `--claude-config DIR`, `$CLAUDE_CONFIG_DIR` or `~/.claude`. Works on Mac and Windows. **Uninstall before recording a demo session**: the rules would steer the agent away from the mistake |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
 | `--render JSON` | Re-render a saved `report.json` to HTML |
