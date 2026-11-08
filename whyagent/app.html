@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent results</title>
+<title>agentwhy results</title>
 <link rel="stylesheet" href="/site.css">
 <style>
   /* Tokens and fonts come from /site.css, shared with every page. */
@@ -28,7 +28,7 @@
   .tab { display: flex; align-items: center; padding: 0 12px; height: 100%; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
   .tab[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
   .bar .spacer { flex: 1; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer; font-size: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: var(--on-ink); cursor: pointer; font-size: 14px; }
   .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-2); }
   .btn:disabled { opacity: .5; cursor: default; }
   @media (max-width: 760px) { .bar { padding: 0 16px; gap: 12px; } }
@@ -143,7 +143,7 @@
       </div>
     </section>
     <section class="row sec">
-      <header><span class="n">02</span><h2>Output</h2><p>What whyagent is printing, as it prints it.</p></header>
+      <header><span class="n">02</span><h2>Output</h2><p>What agentwhy is printing, as it prints it.</p></header>
       <pre class="log" id="lLog"></pre>
     </section>
   </main>
@@ -163,11 +163,11 @@ const route = location.pathname.match(/^\/a\/([\w.-]+)/);
 /* ---------------- list ---------------- */
 async function loadList() {
   let rows = [];
-  try { rows = await (await fetch("/api/analyses")).json(); } catch { $("#list").innerHTML = `<p class="empty">Couldn't reach the whyagent server.</p>`; return; }
+  try { rows = await (await fetch("/api/analyses")).json(); } catch { $("#list").innerHTML = `<p class="empty">Couldn't reach the agentwhy server.</p>`; return; }
   const fresh = known ? rows.filter((r) => !known.has(r.id)).map((r) => r.id) : [];
   known = new Set(rows.map((r) => r.id));
   if (!rows.length) {
-    $("#list").innerHTML = `<p class="empty">No analyses yet. Start one with <b>New analysis</b>, or run <code>whyagent --test … --good …</code> in this repo.</p>`;
+    $("#list").innerHTML = `<p class="empty">No analyses yet. Start one with <b>New analysis</b>, or run <code>agentwhy --test … --good …</code> in this repo.</p>`;
     return;
   }
   const label = { done: "done", running: "running", starting: "starting", stopped: "stopped" };
@@ -179,7 +179,7 @@ async function loadList() {
         : r.status === "stopped" ? `<span class="muted">Stopped before it finished.</span>` : `<span class="muted">In progress…</span>`;
       const st = failed ? "failed" : r.status;
       const live = r.status === "running" || r.status === "starting";
-      return `<tr class="link" data-id="${esc(r.id)}"${fresh.includes(r.id) ? ' style="background:#fbfce6"' : ""}><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span>${live ? `<div><a href="/a/${esc(r.id)}" style="font-size:12.5px">watch live</a></div>` : ""}</td>
+      return `<tr class="link" data-id="${esc(r.id)}"${fresh.includes(r.id) ? ' style="background:var(--fresh)"' : ""}><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span>${live ? `<div><a href="/a/${esc(r.id)}" style="font-size:12.5px">watch live</a></div>` : ""}</td>
         <td><code title="${esc(r.testId)}">${esc(r.test || r.id)}</code><div class="muted" style="font-size:12.5px">${esc(r.repo)} · ${esc(r.id)}</div></td>
         <td>${result}</td><td>${esc(r.mode || "-")}</td><td class="num">${r.runs ?? "-"}</td><td class="muted" style="white-space:nowrap">${esc(ago(r.when))}</td></tr>`;
     }).join("") + "</tbody></table></div>";
@@ -255,7 +255,7 @@ function renderLive(status) {
   const m = S.meta || {};
   const test = (m.test || "").split(/\s+/).find((w) => w.includes("::")) || m.test || "";
   const name = test.split("::").pop();
-  document.title = `whyagent · ${name || "analysis"}`;
+  document.title = `agentwhy · ${name || "analysis"}`;
   $("#lMeta").innerHTML = [m.repo && `<span>repo <b>${esc(m.repo)}</b></span>`, m.good && `<span>range <b>${esc(String(m.good).slice(0, 7))}..${esc(String(m.head || "").slice(0, 7))}</b></span>`,
     `<span>analysis <b>${esc(route[1])}</b></span>`].filter(Boolean).join("");
   $("#lHead").innerHTML = S.cause ? `<span class="hl">Found it: edit #${S.cause.step_id}</span> in <code>${esc(S.cause.file)}</code>. Writing the report…`

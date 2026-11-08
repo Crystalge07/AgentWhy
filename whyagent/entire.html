@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent · Entire</title>
+<title>agentwhy · Entire</title>
 <link rel="stylesheet" href="/site.css">
 <style>
   .evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); background: var(--paper); margin-top: 18px; }
@@ -26,7 +26,7 @@
   <div>
     <h1>Entire is where the evidence comes from</h1>
     <p class="lede">git blame can tell you who changed a line. Only the agent's recorded session can tell you <em>why</em>.
-      Entire records every coding-agent session and links it to the commit it produced, and that recording is whyagent's input:
+      Entire records every coding-agent session and links it to the commit it produced, and that recording is agentwhy's input:
       without it there are no edits to search, no reasoning to show, and nothing to learn from.</p>
   </div>
 
@@ -34,7 +34,7 @@
     <h2>Where Entire is used in the pipeline</h2>
     <div class="sub">Five of the twelve steps in the pipeline view depend on what Entire recorded, and the answer goes back to it.</div>
     <ol class="steps three">
-      <li><i>Find the commit</i><b>Read the checkpoint trailer</b><span>Every commit made in a recorded session carries an <code>Entire-Checkpoint</code> trailer. No trailer means a person wrote it, and whyagent stops there.</span></li>
+      <li><i>Find the commit</i><b>Read the checkpoint trailer</b><span>Every commit made in a recorded session carries an <code>Entire-Checkpoint</code> trailer. No trailer means a person wrote it, and agentwhy stops there.</span></li>
       <li><i>Entire: open the session</i><b>Load the transcript</b><span>The session behind that checkpoint: the task the agent was given, every edit, every command, what it was thinking and what it saw on screen.</span></li>
       <li><i>Rebuild the agent's work</i><b>Turn it into replayable edits</b><span>One commit becomes an ordered list of edits, including ones made with shell commands, and replaying them must rebuild the commit exactly.</span></li>
       <li><i>Search the edits</i><b>Bisect inside the commit</b><span>git bisect stops at a commit. With Entire's edits we keep going, down to the single edit that broke the test.</span></li>
@@ -45,7 +45,7 @@
 
   <section class="card">
     <h2>From the latest analysis</h2>
-    <div class="sub">What Entire's recording gave whyagent on the newest finished analysis in this repo.</div>
+    <div class="sub">What Entire's recording gave agentwhy on the newest finished analysis in this repo.</div>
     <div id="latest"><p class="sub" style="margin-top:14px">Loading…</p></div>
   </section>
 
@@ -83,7 +83,7 @@ fetch("/api/latest").then(r => r.json()).then(d => {
       <div style="border-top:1px solid var(--line)"><div class="k">What the agent was thinking</div><p>${esc(c.reasoning || "Not recorded for this edit.")}</p></div>
       <div style="border-top:1px solid var(--line)"><div class="k">What it was reacting to</div><p>${esc(c.trigger || "Not recorded for this edit.")}</p></div>
     </div>`;
-}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the agentwhy server.</p>`; });
 </script>
 </body>
 </html>

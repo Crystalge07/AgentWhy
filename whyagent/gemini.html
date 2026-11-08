@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent · Gemini</title>
+<title>agentwhy · Gemini</title>
 <link rel="stylesheet" href="/site.css">
 <style>
   .big-lesson { font-size: 24px; font-weight: 500; line-height: 1.4; max-width: 980px; margin: 18px 0 0; }
@@ -30,12 +30,12 @@
     <h1>Gemini turns a proven mistake into a rule</h1>
     <p class="lede">Finding the edit that broke the test is half the job. The other half is making sure no agent makes that mistake again.
       Once the cause is proven, Gemini reads the agent's reasoning, the error it was reacting to and the bad edit, and writes a one-sentence
-      lesson. whyagent then tests that lesson on fresh agents before it's allowed into anyone's rulebook.</p>
+      lesson. agentwhy then tests that lesson on fresh agents before it's allowed into anyone's rulebook.</p>
   </div>
 
   <section class="card">
     <h2>Where Gemini is used in the pipeline</h2>
-    <div class="sub">Every model call in whyagent goes to Gemini first. The steps before this are all real test runs, so no model ever decides the cause.</div>
+    <div class="sub">Every model call in agentwhy goes to Gemini first. The steps before this are all real test runs, so no model ever decides the cause.</div>
     <ol class="steps">
       <li><i>Write a lesson</i><b>Check saved lessons first</b><span>If a proven lesson for this file and error is already in Tiger Data, it's reused and Gemini isn't called.</span></li>
       <li><i>Write a lesson</i><b>Write the rule</b><span>Gemini (<code>gemini-flash-latest</code>) gets the agent's reasoning, the error it saw and the diff of the proven edit, and writes one rule. Rules may never tell an agent to edit the tests.</span></li>
@@ -70,7 +70,7 @@ fetch("/api/latest").then(r => r.json()).then(d => {
     ${R.a ? `<div class="arms">${arm("Without the lesson", R.a)}${arm("With the lesson", R.b)}</div>
       <p class="verdict">${R.verdict === "VALIDATED" ? "<b>Validated.</b> " : ""}${esc(VERDICT[R.verdict] || R.verdict || "")}${R.p != null ? ` <span class="sub">p = ${Number(R.p).toPrecision(2)}, ${esc(R.agent || "")} reruns</span>` : ""}</p>` : ""}`
     : `<p class="sub" style="margin-top:14px">This analysis stopped at the root cause, before writing a lesson.</p>`;
-}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the agentwhy server.</p>`; });
 </script>
 </body>
 </html>

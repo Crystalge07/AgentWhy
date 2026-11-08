@@ -1,6 +1,7 @@
 /* Shared by every page of the results site: fonts, colour tokens, the top bar and its sponsor menu.
-   One quiet light theme, like a printed spec sheet: warm paper, black ink, colour only where it means something
-   (green passed, red-orange failed, violet "other", blue running, amber git blame's pick, highlighter for the answer). */
+   A quiet theme like a printed spec sheet: warm paper, black ink, colour only where it means something
+   (green passed, red-orange failed, violet "other", blue running, amber git blame's pick, highlighter for the answer).
+   Dark follows the system unless the top bar's toggle picked one (html[data-theme], saved in localStorage). */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 
 :root {
@@ -14,8 +15,46 @@
   --blame: #9a6410; --blame-bg: #f8efdc;
   --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --on-ink: #ffffff;                               /* text on an ink-filled button */
+  --dot: #dcd8cd; --fresh: #fbfce6;
+  --shadow: rgba(22, 20, 15, .10);
   --bar-h: 56px;
+  color-scheme: light;
 }
+/* Dark: the same warm palette at night. Highlighter becomes a dim olive so light ink stays readable on it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14130f; --paper: #1c1b16; --wash: #26241e; --line: #302e27; --line-2: #45423a;
+    --ink: #edebe3; --ink-2: #cbc7bb; --muted: #9b968a; --faint: #6d695f;
+    --hi: #5a5714;
+    --pass: #4cc49a; --pass-bg: #16302a; --fail: #f07a4c; --fail-bg: #3a1f15;
+    --other: #a68ef0; --other-bg: #29233f; --run: #7f9cff; --run-bg: #1b2446; --blame: #e0a74a; --blame-bg: #372a12;
+    --on-ink: #14130f; --dot: #34322b; --fresh: #2b2a13; --shadow: rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14130f; --paper: #1c1b16; --wash: #26241e; --line: #302e27; --line-2: #45423a;
+  --ink: #edebe3; --ink-2: #cbc7bb; --muted: #9b968a; --faint: #6d695f;
+  --hi: #5a5714;
+  --pass: #4cc49a; --pass-bg: #16302a; --fail: #f07a4c; --fail-bg: #3a1f15;
+  --other: #a68ef0; --other-bg: #29233f; --run: #7f9cff; --run-bg: #1b2446; --blame: #e0a74a; --blame-bg: #372a12;
+  --on-ink: #14130f; --dot: #34322b; --fresh: #2b2a13; --shadow: rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+
+/* light/dark toggle (top bar, and the standalone report's own bar) */
+.theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none;
+                border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); cursor: pointer; padding: 0; }
+.theme-toggle:hover { background: var(--wash); }
+.theme-toggle svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.theme-toggle .moon, :root[data-theme="dark"] .theme-toggle .sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle .sun { display: none; }
+  :root:not([data-theme="light"]) .theme-toggle .moon { display: block; }
+}
+.sub-bar .theme-toggle { display: none !important; }  /* a served report already has the site bar's toggle */
 
 /* ---------------------------------------------------------------- top bar (same on every page) */
 .site-bar { position: sticky; top: 0; z-index: 40; height: var(--bar-h); display: flex; align-items: center; gap: 20px;
@@ -33,7 +72,7 @@
 .site-menu > button svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; transition: transform .15s; }
 .site-menu > button[aria-expanded="true"] svg { transform: rotate(180deg); }
 .site-menu-list { position: absolute; right: 0; top: calc(100% + 6px); width: 300px; background: var(--paper); border: 1px solid var(--line-2);
-                  box-shadow: 0 8px 24px rgba(22, 20, 15, .10); padding: 6px; }
+                  box-shadow: 0 8px 24px var(--shadow); padding: 6px; }
 .site-menu-list[hidden] { display: none; }
 .site-menu-list a { display: block; padding: 10px 12px; text-decoration: none; color: var(--ink); }
 .site-menu-list a:hover, .site-menu-list a:focus-visible { background: var(--wash); outline: none; }
@@ -80,7 +119,7 @@ body.sponsor { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1
 .sponsor .fw::after { content: ""; position: absolute; right: -1px; top: -4.5px; border: 5px solid transparent; border-left: 7px solid var(--ink-2); border-right: 0; }
 
 /* charts */
-:root { --c-pass: var(--pass); --c-fail: var(--fail); --c-other: var(--other); --c-laptop: #a29c8c; --c-vultr: var(--run); --c-bar: var(--ink-2); }
+:root { --c-pass: var(--pass); --c-fail: var(--fail); --c-other: var(--other); --c-laptop: var(--muted); --c-vultr: var(--run); --c-bar: var(--ink-2); }
 .sponsor .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; color: var(--ink-2); margin: 10px 0 4px; }
 .sponsor .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sponsor .legend i { width: 11px; height: 11px; display: inline-block; }
@@ -91,7 +130,7 @@ body.sponsor { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1
 .sponsor svg.chart .grid { stroke: var(--line); }
 .sponsor svg.chart .hit { fill: transparent; cursor: default; }
 .sponsor svg.chart .hit:hover + .mark, .sponsor svg.chart .mark:hover { opacity: .8; }
-.sponsor #tip { position: fixed; pointer-events: none; background: var(--paper); border: 1px solid var(--line-2); box-shadow: 0 6px 18px rgba(22, 20, 15, .1);
+.sponsor #tip { position: fixed; pointer-events: none; background: var(--paper); border: 1px solid var(--line-2); box-shadow: 0 6px 18px var(--shadow);
                 padding: 8px 10px; font-size: 13px; color: var(--ink); z-index: 50; opacity: 0; transition: opacity .12s; white-space: nowrap; }
 .sponsor #tip b { display: block; margin-bottom: 2px; }
 

@@ -97,7 +97,7 @@ def test_pr_uses_the_rerun_fix_verified_at_head(repo, tmp_path, monkeypatch):
 
     assert pr["url"] == "https://github.com/o/r/pull/7" and pr["fix"] == "rerun" and pr["files"] == ["app.py"]
     br = pr["branch"]
-    assert br == "whyagent/fix-app-abc123"
+    assert br == "agentwhy/fix-app-abc123"
     # the rerun's work replaces the session's from the guilty edit on; the later commit is kept
     assert git(remote, "show", f"{br}:app.py") == "# config v2\nVERIFY = True\nOTHER = 1\nSTRICT = True"
     assert git(remote, "show", f"{br}:b.py") == "LATER = 1"

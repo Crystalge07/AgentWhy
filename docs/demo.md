@@ -24,13 +24,13 @@ The judge-facing demo repo is **payments-client**:
 
 - Code: https://github.com/Crystalge07/payments-client (its README has the results table and the reports)
 - Sessions: the Entire repo `et/agentwhy/payments-client`, which holds the transcripts
-- PRs whyagent opened (closed ones included): https://github.com/Crystalge07/payments-client/pulls?q=is%3Apr
+- PRs agentwhy opened (closed ones included): https://github.com/Crystalge07/payments-client/pulls?q=is%3Apr
 
 The tag `seed` is the clean starting point: the Payments client with Entire enabled, before any
 README. Branch from it, not from `main`. `main`'s README describes the mistakes, and an agent
 working on `main` would read it.
 
-| Branch | Agent | What happened | whyagent result |
+| Branch | Agent | What happened | agentwhy result |
 | --- | --- | --- | --- |
 | `scenario-1` | Claude Opus 5.5, not steered | Asked to paginate `list_invoices`. It made `list_invoices()` return one page, moved the "all" behaviour to a new `list_all_invoices()`, and rewrote the contract test. It made every edit with one `python3` heredoc, not the Edit tool. The next commit restores the test. | Root cause: the `list_invoices` edit, in 2 runs. Reruns: 0/6 without the lesson vs 6/6 with it, p = 0.001, VALIDATED. `--pr` opened PR #1 using a passing rerun's fix, re-verified at HEAD. |
 | `scenario-2` | Claude Haiku 5.5, **steered** | The 2b prompt, then "don't add constructor args, change the defaults in config.py, keep the error message change, commit". The next commit restores the retry test. | `--line payments/client.py:37` (the rewritten raise) is **NOT the cause**. Root cause: the `config.py` defaults, in 6 runs. |
@@ -38,15 +38,15 @@ working on `main` would read it.
 Neither model's reasoning is in the transcript (both hide their thinking, and neither wrote text
 before editing), so the reports show the prompt and the exact command or edit instead.
 
-You need Python 3.10+, Docker, Claude Code, the Entire CLI and whyagent (`pip install -e .` in this repo).
+You need Python 3.10+, Docker, Claude Code, the Entire CLI and agentwhy (`pip install -e .` in this repo).
 
 **Rerun an analysis.** This needs read access to the Entire repo, because the session loads from there:
 
 ```sh
 entire repo clone /et/agentwhy/payments-client && cd payments-client
 T="python -m pytest -q -p no:cacheprovider"
-git checkout scenario-1 && whyagent --good seed --no-rerun --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
-git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --no-rerun --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
+git checkout scenario-1 && agentwhy --good seed --no-rerun --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
+git checkout scenario-2 && agentwhy --good seed --line payments/client.py:37 --no-rerun --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
 
 **Record your own session** (scenario 1; a GitHub clone works here, since you record the session):
@@ -67,11 +67,11 @@ git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --n
    ```sh
    git checkout seed -- tests/test_client.py && git commit -m "Restore the list_invoices test"
    ```
-5. Run whyagent:
+5. Run agentwhy:
    ```sh
-   whyagent --good seed --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice" --open
+   agentwhy --good seed --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice" --open
    ```
-   **Expect:** the precheck passes at `seed` and fails at HEAD. whyagent finds the guilty commit
+   **Expect:** the precheck passes at `seed` and fails at HEAD. agentwhy finds the guilty commit
    through its Entire checkpoint and pins the bug to the `list_invoices` edit in a few test runs.
    Stages 7–8 write a lesson and rerun the agent with and without it, which needs Gemini or Claude
    credentials and takes a while. Add `--no-rerun` to stop after the root cause, or `--pr` (on a
@@ -134,9 +134,9 @@ type of the last error."
 
 All three recordings are real Entire sessions on branches of `payments-api-client`. In each, the agent
 **edited an existing test so its change would pass**. A follow-up human commit restores the original test, which is exactly the
-case whyagent pins tests to HEAD for. The demo should say so plainly.
+case agentwhy pins tests to HEAD for. The demo should say so plainly.
 
-| Branch | Agent | What it did wrong | Restoring commit | whyagent result |
+| Branch | Agent | What it did wrong | Restoring commit | agentwhy result |
 | --- | --- | --- | --- | --- |
 | `scenario-1` | Claude Opus 5.5 | Paginated correctly, but changed `list_invoices()` to return only page 1 (a breaking change) and rewrote `test_list_invoices_returns_every_invoice` to match | `ea7ecb9` restores the test | blame hint on `payments/client.py:43` confirmed in 5 runs; without `--line`: commit bisect, 4 edits pruned (verified), same edit confirmed |
 | `scenario-2b-clean` | Claude Haiku 5.5, **steered** | First added constructor args (the right fix). The user then said "don't add constructor args, change the defaults in config.py, keep the error message change, commit", so it set `MAX_RETRIES = 1` / `TIMEOUT_S = 2` globally with `sed -i` (its reasoning notes this will break the retry test) and weakened two retry tests | `e885934` restores the two retry tests | blame hint on `payments/client.py:39` → **NOT the cause**; 2 edits pruned (verified); bisect + confirm on the `config.py` shell edit; 6 runs. Analyze with `--good f39623e` |
@@ -148,16 +148,16 @@ earlier 2b recording polluted by stashed sessions from the failed TLS attempts; 
 **`scenario-1-long` (2026-11-07, not demo-clean).** A longer headless Opus 5.5 session from the seed
 with the scenario 1 lure plus side work (docstrings, `--page-size` flag). It made the same real
 mistake (`list_invoices()` returns one page) and rewrote the contract test; `b29f46e` restores it.
-whyagent finds the right edit (#24 of 25, 11 pruned) in 7 runs, with and without pruning. But Entire
+agentwhy finds the right edit (#24 of 25, 11 pruned) in 7 runs, with and without pruning. But Entire
 attached four older sessions with uncommitted work to its checkpoint (primary: `7a566aa1`, a 2b
 attempt), so 9 edits are unattributed and the agent's reasoning isn't shown. Local branch only, not
 pushed. A clean long recording needs a machine/clone without stale sessions (try `entire clean`
 first, after asking).
 
-**`entire why` vs whyagent (demo beat for the Entire judges).** In `payments-api-client` on
+**`entire why` vs agentwhy (demo beat for the Entire judges).** In `payments-api-client` on
 `scenario-2b-clean`, `entire why payments/client.py:39` shows the session behind the decoy line, and
 `entire why payments/config.py:9` says its agent/prompt are "a best-effort guess" (the edit was a
-`sed -i`). Run both before whyagent: whyagent says the first is NOT the cause and pins the second to
+`sed -i`). Run both before agentwhy: agentwhy says the first is NOT the cause and pins the second to
 the exact shell command, with test runs as proof.
 
 **Disclose the steering in 2b.** The bad edit came right after a user prompt telling the agent to
@@ -179,26 +179,26 @@ Windows a Windows-style one, e.g. from `pwd -W`):
 ```sh
 cd payments-api-client
 T="python -m pytest -q -p no:cacheprovider"
-git checkout scenario-1        && whyagent --good 87dc38e --line payments/client.py:43 --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
-git checkout scenario-2b-clean && whyagent --good f39623e --line payments/client.py:39 --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
-git checkout scenario-3-haiku  && whyagent --good 87dc38e --test "$T tests/test_settlement.py::test_invoice_paid_after_charge_settles"
+git checkout scenario-1        && agentwhy --good 87dc38e --line payments/client.py:43 --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
+git checkout scenario-2b-clean && agentwhy --good f39623e --line payments/client.py:39 --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
+git checkout scenario-3-haiku  && agentwhy --good 87dc38e --test "$T tests/test_settlement.py::test_invoice_paid_after_charge_settles"
 ```
 
 Stages 7–8 alone, from a saved root cause, with a hand-written lesson (no Gemini needed):
 
 ```sh
-whyagent --root-cause .whyagent/root_cause.json --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice" \
+agentwhy --root-cause .whyagent/root_cause.json --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice" \
   --lesson "..." --rerun-agent claude-code --runs 5
 ```
 
 `--runs 5` is the minimum worth showing: with 2 or 3 runs per arm the Fisher test can't reach p < 0.05,
 so nothing can be VALIDATED. Ten agent runs can take up to ~25 min on 2 workers, so **record Stage 8
-before the demo** and show it with `whyagent --render .whyagent/report.json`. To rehearse the plumbing
+before the demo** and show it with `agentwhy --render .whyagent/report.json`. To rehearse the plumbing
 with no model, use the stub agent (arm B's prompt contains "Lesson"):
 
 ```sh
 WHYAGENT_STUB_CMD='case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) <repeat the bad edit> ;; esac' \
-  whyagent --root-cause .whyagent/root_cause.json --test "..." --lesson "..." --rerun-agent stub
+  agentwhy --root-cause .whyagent/root_cause.json --test "..." --lesson "..." --rerun-agent stub
 ```
 
 ## Live loop (`--live`)
@@ -207,7 +207,7 @@ Runs on the mock model (no Gemini, no network). The mock covers scenario 2b only
 `payments-api-client` on `scenario-2b-clean`, against the saved root cause:
 
 ```sh
-WHYAGENT_MODEL=mock whyagent --live --yes \
+WHYAGENT_MODEL=mock agentwhy --live --yes \
   --root-cause .whyagent/s2b/root_cause.json \
   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds" \
   --instructions "$(mktemp -d)/AGENTS.md" \
@@ -235,30 +235,30 @@ What's canned and what's real, so we can say it on stage:
 
 ## Pipeline view (for judges)
 
-`whyagent --serve` also serves **`/live`**: an n8n-style workflow canvas that draws one analysis as it runs, in
+`agentwhy --serve` also serves **`/live`**: an n8n-style workflow canvas that draws one analysis as it runs, in
 plain words (no hashes, commands or ids). Each stage is a node that lights up, works, and gets a check mark;
 whenever a stage runs tests, a branch of sandbox nodes (one per `--workers`) fans out under it and each shows
 what it's testing and the result. The panel below the canvas explains the current stage: the agent's edits as
 cards, the blame hint's "not the cause" moment, the search narrowing, the lesson, the reruns.
 
 ```sh
-cd payments-api-client && whyagent --serve     # terminal 1: http://127.0.0.1:8700/live
+cd payments-api-client && agentwhy --serve     # terminal 1: http://127.0.0.1:8700/live
 git checkout scenario-2b-clean                   # terminal 2: start the run; /live jumps to it
-whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
+agentwhy --good f39623e --line payments/client.py:39 --workers 4   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
 
 - `/live/<id>` follows a run as it happens (Server-Sent Events from its `events.jsonl`).
 - `/live/<id>?replay=1` plays a finished run back from its saved events (gaps capped at 3 s, a beat after each
   result; Play/Continue, Pause and Restart, Space and R keys; it waits for Play, or add `&play` to start at once). Fallback for bad Wi-Fi, a down VM or no model quota.
   If you show a replay to judges, say it's a recorded run.
-- On the Vultr VM the server listens on 127.0.0.1 only: run `whyagent --serve` there and tunnel it with
+- On the Vultr VM the server listens on 127.0.0.1 only: run `agentwhy --serve` there and tunnel it with
   `ssh -L 8700:127.0.0.1:8700 root@<vm-ip>`, then open http://127.0.0.1:8700/live on the laptop.
 - Events come from `events.stage()` / `events.emit()` calls in the pipeline (no log scraping); they're a
   no-op unless an analysis turned them on, so library use and tests are unaffected.
 
 ## Tiger Data and Vultr pages (for the sponsor tracks)
 
-`whyagent --serve` also serves two pages, both queried live from Tiger Data (`whyagent/dashboards.py`):
+`agentwhy --serve` also serves two pages, both queried live from Tiger Data (`whyagent/dashboards.py`):
 
 - **`/tiger`**: what we store and how. Totals (analyses, test runs, agent reruns, runs reused from the cache,
   hours of testing, validated lessons), test runs per 30 minutes by result (`time_bucket` on the `runs`
