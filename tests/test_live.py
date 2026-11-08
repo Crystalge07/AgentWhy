@@ -167,7 +167,7 @@ def test_make_model(monkeypatch):
         make_model("gpt")
     m = make_model("claude")
     assert m.name == "claude" and m.rerun_agent == "claude-code"
-    assert make_model("gemini").rerun_agent == "gemini-cli"
+    assert make_model("gemini").rerun_agent == "auto"  # Gemini CLI, Claude Code if Gemini fails
     assert make_model("claude", "stub").rerun_agent == "stub"
 
 
