@@ -195,6 +195,7 @@
   <span class="sp"></span>
   <span class="ctl hidden" id="ctl">
     <button id="pause" class="on" title="Space">Play</button>
+    <button id="next" title="N or →">Next step</button>
     <button id="restart" title="R">Restart</button>
   </span>
 </header>
@@ -732,7 +733,7 @@ function render() {
 const parts = location.pathname.split("/").filter(Boolean);
 const ID = parts[1] || null;
 const REPLAY = new URLSearchParams(location.search).has("replay");
-let paused = true, timer = null, queue = [], qi = 0;
+let paused = true, stepping = false, timer = null, queue = [], qi = 0;
 
 function reset() { S = fresh(); shownPanel = null; $("#pb").innerHTML = ""; buildCanvas(); render(); }
 function handle(ev) { apply(ev); render(); }
@@ -754,9 +755,13 @@ async function startReplay() {
   // Starts paused: the presenter presses Play. Restart goes back to the start and waits for Play again.
   const label = () => { $("#pause").textContent = !paused ? "Pause" : qi ? "Continue" : "Play"; $("#pause").classList.toggle("on", paused); };
   const togglePause = () => { paused = !paused; label(); if (!paused) step(); };
-  const restart = () => { clearTimeout(timer); qi = 0; reset(); paused = true; label(); };
-  $("#pause").onclick = togglePause; $("#restart").onclick = restart;
-  document.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); togglePause(); } if (e.key === "r") restart(); });
+  const restart = () => { clearTimeout(timer); qi = 0; stepping = false; reset(); paused = true; label(); };
+  // Next step: fast-forward through the rest of this stage, stop as the next one starts (works paused or playing)
+  const next = () => { if (qi >= queue.length) return; stepping = true; paused = false; label(); step(); };
+  window.__label = label;
+  $("#pause").onclick = togglePause; $("#restart").onclick = restart; $("#next").onclick = next;
+  document.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); togglePause(); } if (e.key === "r") restart();
+    if (e.key === "n" || e.key === "ArrowRight") next(); });
   label();
   if (new URLSearchParams(location.search).has("play")) togglePause();  // ?replay=1&play: start without a click
 }
@@ -764,7 +769,13 @@ function step() {
   clearTimeout(timer);
   if (paused || qi >= queue.length) return;
   const ev = queue[qi];
-  timer = setTimeout(() => { qi++; handle(ev); step(); }, (ev.delay || 0) * 1000);
+  const isStageStart = ev.type === "stage" && ev.status === "start" || ev.type === "done";
+  const wait = stepping ? Math.min(ev.delay || 0, 0.12) : ev.delay || 0;
+  timer = setTimeout(() => {
+    qi++; handle(ev);
+    if (stepping && isStageStart && qi > 1) { stepping = false; paused = true; window.__label(); return; }
+    step();
+  }, wait * 1000);
 }
 
 async function pickRun() {
