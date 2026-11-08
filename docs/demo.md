@@ -242,7 +242,7 @@ what it's testing and the result. The panel below the canvas explains the curren
 cards, the blame hint's "not the cause" moment, the search narrowing, the lesson, the reruns.
 
 ```sh
-cd payments-demo && whyagent --serve            # terminal 1: http://127.0.0.1:8700/live
+cd payments-api-client && whyagent --serve     # terminal 1: http://127.0.0.1:8700/live
 git checkout scenario-2b-clean                   # terminal 2: start the run; /live jumps to it
 whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
