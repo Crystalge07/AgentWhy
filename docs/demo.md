@@ -74,8 +74,9 @@ git checkout scenario-2 && agentwhy --good seed --line payments/client.py:37 --n
    **Expect:** the precheck passes at `seed` and fails at HEAD. agentwhy finds the guilty commit
    through its Entire checkpoint and pins the bug to the `list_invoices` edit in a few test runs.
    Stages 7–8 write a lesson and rerun the agent with and without it, which needs Gemini or Claude
-   credentials and takes a while. Add `--no-rerun` to stop after the root cause, or `--pr` (on a
-   fork you can push to) to get a PR when the lesson is validated.
+   credentials and takes a while. Add `--no-rerun` to stop after the root cause. Every run opens a
+   PR with the fix (on a fork you can push to; `--no-pr` turns it off): the rerun's fix plus the rule
+   when the lesson is validated, else the revert of the guilty edit with no rule.
 
 The older recordings in `payments-api-client` (below) are kept for reference. `payments-client` replaces them
 for the demo.

@@ -63,9 +63,9 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
 | `--lesson TEXT` | Test this lesson instead of asking `--model` to write one (without it and without the model's key, Stage 7 is skipped) |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
-| `--pr` | If Stage 8 VALIDATES the lesson, open a GitHub PR: the fix from a passing with-lesson rerun (else the revert of the guilty edit), re-verified at HEAD (target test + suite, tests untouched), plus the rule added to `--instructions` and an `@AGENTS.md` import in `CLAUDE.md`. Done in a temp worktree; needs a github.com remote and `gh` logged in |
+| `--pr` / `--no-pr` | **On by default.** After every analysis that finds a root cause, open a GitHub PR with a fix re-verified at HEAD (target test + suite, tests untouched). If Stage 8 VALIDATES the lesson: the fix from a passing with-lesson rerun (else the revert of the guilty edit), plus the rule added to `--instructions` and an `@AGENTS.md` import in `CLAUDE.md`. Otherwise (lesson not validated, or `--no-rerun`): the revert of the guilty edit, and no rule. Done in a temp worktree; needs a github.com remote and `gh` logged in (if not, the PR step reports why and the analysis still succeeds). `--no-pr` turns it off |
 | `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
-| `--brain` | List every validated lesson (local `~/.whyagent/brain.jsonl` + Tiger Data) with its evidence, and exit |
+| `--brain` | List every validated lesson (Tiger Data) with its evidence, and exit |
 | `--rules` | Print the validated rules as Markdown for an agent's context (newest first, max `--rules-limit`, default 10; skips rules already in `--instructions`; Tiger timeout 3 s). Meant for a Claude Code `SessionStart` hook so every session, in any repo, starts with your account-wide rules |
 | `--install-hook` / `--uninstall-hook` | Add or remove the Claude Code `SessionStart` hook that runs `--rules`, in `--claude-config DIR`, `$CLAUDE_CONFIG_DIR` or `~/.claude`. Works on Mac and Windows. **Uninstall before recording a demo session**: the rules would steer the agent away from the mistake |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
@@ -128,7 +128,7 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 - **Results site** (`--serve`, main page `/live`): light and dark themes. It follows the system theme, and the top bar's toggle overrides it and remembers the choice. Reports written by `--render` or a new analysis have the same toggle.
 - **Vultr VM** (8 vCPU) is set up and every commit auto-syncs to it (`scripts/sync_vm.py`, see `docs/setup.md`).
 - **Not tried yet:** more than 4 workers on real sessions, the egress proxy outside the tests, Stage 8 on the flaky scenario with a real agent.
-- Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a local JSONL store (`~/.whyagent/brain.jsonl` or `WHYAGENT_BRAIN`) mirrored to a `lessons` table in Tiger Data, so validated lessons are shared across the team.
+- Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a `lessons` table in Tiger Data, the only store (nothing is kept locally), so every teammate sees the same validated lessons and a lesson deleted there is gone for everyone. Saving needs `TIGER_DATABASE_URL`; without it the save fails loudly and lookups find nothing.
 - `agentwhy --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
 
 ## Layout
@@ -136,7 +136,7 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 | Module | Owner | What it does |
 | --- | --- | --- |
 | `whyagent/types.py` | shared | `Step` / `State` / `RunResult` / `RootCause` |
-| `whyagent/entire.py` | A | Entire CLI wrapper + connection check; Brain (`brain_lookup` / `brain_save`, local file + Tiger) |
+| `whyagent/entire.py` | A | Entire CLI wrapper + connection check; Brain (`brain_lookup` / `brain_save`, Tiger Data only) |
 | `whyagent/adapters/` | A | Claude Code parser, multi-session merge, write hunks, replay fidelity, shell-edit attribution |
 | `whyagent/bisect/` | A | Dependency map, Stage 3 blame hint, prefix bisect (parallel, `--scan`), confirm, ddmin |
 | `whyagent/graph.py` | A | Stage 4 pruning from a static import graph, verified with one run |
@@ -147,7 +147,7 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 | `whyagent/report.py`, `report_template.html` | A + B | `report.json` + self-contained HTML report (Report tab + Tiger Data run-data tab), built from real pipeline data |
 | `whyagent/server.py`, `app.html`, `events.py` | B | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
 | `whyagent/trail.py` | A | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
-| `whyagent/fix_pr.py` | B | `--pr`: pick a fix verified at HEAD (rerun's work or revert), commit it with the rule, push a branch, `gh pr create` |
+| `whyagent/fix_pr.py` | B | The fix PR (on by default): pick a fix verified at HEAD (rerun's work or revert), commit it with the rule if validated, push a branch, `gh pr create` |
 | `whyagent/rules.py` | B | `--rules`: account-wide validated rules as Markdown for a SessionStart hook |
 | `whyagent/providers.py` | A + B | Gemini first, Claude fallback for every model call; records which provider answered |
 | `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
