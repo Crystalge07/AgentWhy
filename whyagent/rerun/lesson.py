@@ -40,6 +40,8 @@ Rules:
 - One sentence, imperative mood, under 25 words.
 - Name the bad move and the better alternative.
 - General enough to apply beyond this exact line or file, but specific to this kind of mistake.
+- The better alternative must keep the existing tests passing as they are. Never suggest editing, mocking,
+  skipping or loosening tests: changing a test to fit the code is the kind of shortcut we're catching.
 - No preamble, quotes or markdown. Output only the sentence."""
 
 
