@@ -92,23 +92,23 @@ def tiger(conn) -> dict:
 
 
 def speed_compare(rows: list[dict]) -> list[dict]:
-    """The latest analysis of each bug on each host; bugs measured on a Vultr VM and somewhere else are compared."""
-    latest: dict[tuple, dict] = {}
+    """Bugs measured on a Vultr VM and on another machine. End to end is only compared when both did the same work
+    (same number of test runs, e.g. a deterministic bug); a flaky bug can take a different path each time, so then
+    only seconds per test run are compared (`same_work` False)."""
+    bugs: dict[str, dict[str, list]] = {}
     for r in rows:
-        if r["test_runs"]:
-            latest[(bug_name(r["label"]), r["host"])] = r
-    bugs: dict[str, dict] = {}
-    for (bug, host), r in latest.items():
-        bugs.setdefault(bug, {})[host] = r
+        if r["test_runs"] and r["wall_s"]:
+            side = "vm" if r["host"].startswith("Vultr") else "laptop"
+            bugs.setdefault(bug_name(r["label"]), {"vm": [], "laptop": []})[side].append(r)
     out = []
-    for bug, hosts in bugs.items():
-        vm = next((r for h, r in hosts.items() if h.startswith("Vultr")), None)
-        others = [r for h, r in hosts.items() if not h.startswith("Vultr")]
-        if vm and others:
-            lap = others[-1]
-            out.append({"bug": bug.split("::")[-1], "vm": vm, "laptop": lap,
-                        "speedup": round(lap["wall_s"] / vm["wall_s"], 1) if vm["wall_s"] else None,
-                        "per_run_speedup": round(lap["ms_per_run"] / vm["ms_per_run"], 1) if vm["ms_per_run"] else None})
+    for bug, s in bugs.items():
+        if not s["vm"] or not s["laptop"]:
+            continue
+        pairs = [(lap, vm) for lap in s["laptop"] for vm in s["vm"] if lap["test_runs"] == vm["test_runs"]]
+        lap, vm = pairs[-1] if pairs else (s["laptop"][-1], s["vm"][-1])
+        out.append({"bug": bug.split("::")[-1], "vm": vm, "laptop": lap, "same_work": bool(pairs),
+                    "speedup": round(lap["wall_s"] / vm["wall_s"], 1) if pairs else None,
+                    "per_run_speedup": round(lap["ms_per_run"] / vm["ms_per_run"], 1) if vm["ms_per_run"] else None})
     return out
 
 

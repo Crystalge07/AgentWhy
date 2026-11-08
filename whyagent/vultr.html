@@ -173,17 +173,19 @@ const bugOf = label => ((label || "").split(/\s+/).find(w => w.includes("::")) |
 function render(d) {
   const c = d.compare;
   if (!c.length) { $("#body").innerHTML = `<p class="sub">No bug has been analyzed on both a laptop and the Vultr VM yet.</p>`; return; }
-  const main = c.reduce((a, b) => (b.speedup || 0) > (a.speedup || 0) ? b : a);
-  const max = Math.max(...c.flatMap(x => [x.laptop.wall_s, x.vm.wall_s]));
+  const same = c.filter(x => x.same_work), flaky = c.filter(x => !x.same_work);
+  const main = same.length ? same.reduce((a, b) => (b.speedup || 0) > (a.speedup || 0) ? b : a) : null;
+  const max = Math.max(...same.flatMap(x => [x.laptop.wall_s, x.vm.wall_s]), 1);
   const lane = (who, r, color) => `<div class="lane"><b>${esc(who)}</b><div class="track"><div class="fill" data-w="${100 * r.wall_s / max}" style="background:${color}"
       data-tip="<b>${esc(who)}</b>${secs(r.wall_s)} to the proven cause<br>${fmt(r.test_runs)} test runs · ${(r.ms_per_run / 1000).toFixed(1)} s per run · ${r.workers || "?"} workers">${secs(r.wall_s)}</div></div></div>`;
   $("#body").outerHTML = `
   <section class="card">
     <div class="hero">
-      <div><div class="big">${main.speedup}×<small>faster</small></div>
-        <p class="sub" style="margin-top:10px">${esc(BUG[main.bug] || "The same bug")}: ${secs(main.laptop.wall_s)} on a laptop, ${secs(main.vm.wall_s)} on Vultr, to find and prove the cause.</p></div>
-      <div class="race">${c.map((x, i) => `
-        <div class="sub" style="margin-top:${i ? 10 : 0}px">${esc(BUG[x.bug] || x.bug)} · same bug, same ${x.vm.workers || 8} parallel workers</div>
+      ${main ? `<div><div class="big">${main.speedup}×<small>faster</small></div>
+        <p class="sub" style="margin-top:10px">${esc(BUG[main.bug] || "The same bug")}: ${secs(main.laptop.wall_s)} on a laptop, ${secs(main.vm.wall_s)} on Vultr, to find and prove the cause.</p></div>`
+        : `<div><div class="big">${c[0].per_run_speedup}×<small>per run</small></div></div>`}
+      <div class="race">${same.map((x, i) => `
+        <div class="sub" style="margin-top:${i ? 10 : 0}px">${esc(BUG[x.bug] || x.bug)} · same bug, same work (${fmt(x.vm.test_runs)} test runs), same ${x.vm.workers || 8} parallel workers</div>
         ${lane(x.laptop.host, x.laptop, css("--c-laptop"))}${lane("Vultr VM", x.vm, css("--c-vultr"))}`).join("")}
       </div>
     </div>
@@ -192,7 +194,7 @@ function render(d) {
   <div class="tiles">
     ${d.hosts.map(h => `<div class="tile"><div class="v">${h.ms_per_run != null ? (h.ms_per_run / 1000).toFixed(1) + " s" : "—"}</div>
       <div class="k">per test run on ${esc(h.host)} (${fmt(h.test_runs)} runs measured)</div></div>`).join("")}
-    ${c.map(x => `<div class="tile"><div class="v">${x.per_run_speedup}×</div><div class="k">faster per test run · ${esc(BUG[x.bug] || x.bug)}</div></div>`).join("")}
+    ${c.map(x => `<div class="tile"><div class="v">${x.per_run_speedup}×</div><div class="k">faster per test run · ${esc(BUG[x.bug] || x.bug)}${x.same_work ? "" : " (flaky: the two runs took different paths, so only per-run time is compared)"}</div></div>`).join("")}
   </div>
 
   <section class="card">

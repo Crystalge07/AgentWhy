@@ -126,3 +126,10 @@ def test_speed_compare_pairs_the_same_bug_across_hosts():
     [c] = speed_compare(rows)
     assert c["bug"] == "test_x" and c["speedup"] == 5.0 and c["per_run_speedup"] == 2.0
     assert c["laptop"]["host"] == "Laptop (Windows)" and c["vm"]["host"] == "Vultr VM"
+    # a flaky bug that took more runs on one machine: no end-to-end claim, only per run
+    rows.append(row(f"demo: pytest {t}", "Vultr VM", 20.0, 1000.0, runs=4))
+    [c] = speed_compare(rows)
+    assert c["same_work"] and c["vm"]["test_runs"] == 10  # still pairs the runs that did the same work
+    [c] = speed_compare([row(f"demo: pytest {t}", "Laptop (Windows)", 300.0, 3000.0, runs=60),
+                         row(f"demo: pytest {t}", "Vultr VM", 20.0, 1500.0, runs=14)])
+    assert not c["same_work"] and c["speedup"] is None and c["per_run_speedup"] == 2.0
