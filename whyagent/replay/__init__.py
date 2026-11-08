@@ -132,10 +132,11 @@ class Replayer:
         if len(hit) >= n or (until_fail and any(r.outcome == TARGET_FAIL for r in hit)):
             res = hit[:n]
             self._log(k, res, cached=True)
+            events.emit("state_done", stage=self.stage, key=k, **self._ev(state), outcomes=[r.outcome for r in res],
+                        ms=0, cached=True)  # the pipeline view still draws the check, marked as reused
             return res
         self._log(k, hit, cached=True)
-        events.emit("state_start", stage=self.stage, key=k, base=state.base_commit[:7], edits=len(state.step_ids),
-                    runs=n - len(hit))
+        events.emit("state_start", stage=self.stage, key=k, **self._ev(state), runs=n - len(hit))
         new: list[RunResult] = []
         try:
             d = self.build(state)
@@ -149,6 +150,8 @@ class Replayer:
             with self._lock:
                 self.cache[k] = res
             self._log(k, res[len(hit):])
+            events.emit("state_done", stage=self.stage, key=k, **self._ev(state), outcomes=[r.outcome for r in res],
+                        ms=0, detail="couldn't build this state")
             return res
         try:
             for _ in range(n - len(hit)):
@@ -161,9 +164,14 @@ class Replayer:
         with self._lock:
             self.cache[k] = res
         self._log(k, new)
-        events.emit("state_done", stage=self.stage, key=k, outcomes=[r.outcome for r in new],
+        events.emit("state_done", stage=self.stage, key=k, **self._ev(state), outcomes=[r.outcome for r in new],
                     ms=sum(r.duration_ms for r in new))
         return res
+
+    @staticmethod
+    def _ev(state: State) -> dict:
+        """What the pipeline view needs to draw a test of `state`: the commit and the edits applied on it."""
+        return {"base": state.base_commit[:7], "edits": len(state.step_ids), "ids": list(state.step_ids)}
 
     def run_many(self, states: list[State], n: int = 1, until_fail: bool = False) -> list[list[RunResult]]:
         """Test several states at once on up to `workers` sandboxes (one bisect round, say). Order is kept;

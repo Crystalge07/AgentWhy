@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable
 
-from . import graph
+from . import events, graph
 from .adapters.fidelity import Fidelity, apply
 from .bisect import (blame_hint, closure, confirm, ddmin, deps, line_owners, map_line, prefix_bisect_parallel,
                      scan)
@@ -73,6 +73,16 @@ def _step_dicts(steps: list[Step], read_parent: Callable[[str], str | None]) -> 
     return out
 
 
+def _card(d: dict) -> dict:
+    """One edit as a card in the pipeline view: what changed, why, and what the agent was reacting to."""
+    new = [ln.strip() for ln in (d.get("new_text") or "").splitlines() if ln.strip()]
+    old = [ln.strip() for ln in (d.get("old_text") or "").splitlines() if ln.strip()]
+    changed = next((ln for ln in new if ln not in old), new[0] if new else "(deletes code)")
+    return {"id": d["id"], "file": d["file"], "line": d["line"], "kind": d["kind"], "test": d["test"],
+            "change": changed[:90], "reasoning": (d.get("reasoning") or "").strip()[:220],
+            "trigger": trigger_line(d.get("trigger")), "command": (d.get("command") or "").strip()[:120] or None}
+
+
 def blind_bisect_runs(order: list[int], root: int, workers: int) -> int:
     """States a bisect over all of `order` would test, given that P(j) fails iff it contains `root`."""
     tested = [0]
@@ -123,6 +133,11 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                          "unattributed": bool(fid.unattributed), "unattributed_ids": fid.unattributed,
                          "shell_ids": fid.shell, "shell_guessed": fid.shell_guessed,
                          "dropped": fid.dropped, "steps": _step_dicts(steps, read_parent)}
+    events.stage("session")
+    events.emit("steps", steps=[_card(d) for d in report["session"]["steps"]], order=order,
+                prompt=(report["session"]["prompt"] or "")[:400], agent=report["session"]["agent"],
+                replay_matches=fid.matches)
+    events.stage("session", "done", edits=len(order))
     say(f"session: {report['session']['id']} · {len(order)} edits · "
         + ("replay matches commit ✓" if fid.matches else
            "replay matches commit ✓ with " + ", ".join(p for p in (
@@ -154,10 +169,13 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         if owner is None or owner not in order:
             why = ("the line changed after the guilty commit" if gl is None else
                    "the line wasn't written by this session")
+            events.stage("blame_hint", "skip", line=opts.line, why=why)
             report.note(f"Blame hint skipped: {why} ({opts.line}).")
             say(f"blame hint: skipped ({why})")
         else:
+            events.stage("blame_hint", line=opts.line, suspect=owner, reverted=sorted(closure({owner}, dep)))
             bh = blame_hint(order, owner, dep, run("blame_hint"))
+            events.stage("blame_hint", "done", suspect=owner, is_cause=bh["is_cause"], outcome=bh["outcome"])
             report["blame_hint"] = {"line": opts.line, "step_ids": [owner], "outcome": bh["outcome"],
                                     "is_cause": bh["is_cause"], "reverted": bh["reverted"]}
             s = by_id[owner]
@@ -170,12 +188,15 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             else:
                 say(f"blame hint: edit #{owner} touches {opts.line} ({s.file}) → NOT the cause (revert, still fails)")
 
+    if not opts.line:
+        events.stage("blame_hint", "skip", why="no line to blame")
     kept = list(order)
     if root is None:
         # Stage 4: Graph pruning, always verified with one run
         if opts.prune:
             files = set(subprocess.run(["git", "ls-tree", "-r", "--name-only", guilty], cwd=repo,
                                        capture_output=True, encoding="utf-8", errors="replace").stdout.split())
+            events.stage("prune")
             reach = graph.reachable(test_cmd, files, lambda f: _show(repo, guilty, f))
             if reach is None:
                 report.note("Pruning skipped: --test names no test file to trace imports from.")
@@ -191,12 +212,14 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                     report["pruning"] = {"pruned": cands if verified else [], "candidates": cands,
                                          "verified": verified, "source": graph.SOURCE,
                                          "runs_with": None, "runs_without": None}
+                    events.stage("prune", "done", pruned=cands if verified else [], kept=kept)
                     say(f"pruning: {len(cands)} edit(s) unreachable from the test → "
                         + ("still fails without them ✓ pruned" if verified else
                            f"{verdict} without them → graph missed a dependency, pruning dropped"))
                 else:
                     report["pruning"] = {"pruned": [], "candidates": [], "verified": None, "source": graph.SOURCE,
                                          "runs_with": None, "runs_without": None}
+                    events.stage("prune", "done", pruned=[], kept=kept)
                     say("pruning: every edit is reachable from the test, nothing to prune")
 
         # Stage 5: prefix bisect
@@ -206,6 +229,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             return outs
 
         runs_before = rp.runs
+        events.stage("bisect", kept=kept, workers=opts.workers)
         if opts.scan:
             res = scan(kept, probe_many)
             k = res["first"]
@@ -217,6 +241,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         report["bisect"] = {"probes": probes, "boundary": kept[k - 1] if k else None, "scan": opts.scan,
                             "edits": len(kept), "kept": kept}
         if k is None:
+            events.stage("bisect", "error", why="every state around the boundary crashed or failed differently")
             say("bisect: inconclusive (every state around the boundary crashed or failed differently)")
             report.note("Bisect inconclusive: the states around the boundary were all OTHER.")
             return None
@@ -229,6 +254,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         if missing:
             probe_many(missing)
         say(f"bisect: {len(kept)} edits → {rp.runs - runs_before} test runs → first failing prefix at edit #{root}")
+        events.stage("bisect", "done", boundary=root, kept=kept, runs=rp.runs - runs_before)
         pr = report.get("pruning")
         if pr and pr.get("verified") and not opts.scan:
             # Savings: the verification run proved the pruned edits don't matter, so a blind bisect over every
@@ -239,6 +265,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             say(f"pruning savings: {pr['runs_with']} runs with pruning vs {pr['runs_without']} for a blind bisect")
 
         # Stage 6: confirm from the end, ddmin if more than one cause
+        events.stage("confirm", root=root, reverted=sorted(closure({root}, dep)), kept=kept)
         ok, coll = confirm(kept, root, dep, run("confirm"))
         collateral = sorted(coll)
         cf = {"step_id": root, "collateral": collateral, "outcome": PASS if ok else TARGET_FAIL, "ddmin": None}
@@ -252,11 +279,14 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             if not dd:
                 say(f"confirm: revert #{root} still fails → ddmin inconclusive")
                 report.note("More than one cause, and ddmin couldn't isolate a minimal set within its run budget.")
+                events.stage("confirm", "error", why="more than one cause; ddmin couldn't isolate them")
                 return None
             extra = sorted(dd - {root})
             say(f"confirm: revert #{root} still fails → ddmin: reverting {{{', '.join('#' + str(i) for i in sorted(dd))}}} passes")
     else:
         extra = []
+        events.stage("bisect", "skip", why=f"blame hint already proved edit #{root}", boundary=root)
+        events.stage("confirm", "skip", why="the blame hint's revert test already confirmed it", root=root)
         report["confirm"] = {"step_id": root, "collateral": collateral, "outcome": PASS, "ddmin": None}
         report["bisect"] = {"probes": probes, "boundary": root, "scan": False, "edits": len(order), "kept": order,
                             "via": "blame_hint"}  # no bisect ran: Stage 3 already tested the boundary
@@ -278,4 +308,10 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         say(f"command: {s.command.strip().splitlines()[0][:200]}  (the agent edited {s.file} from the shell)")
     say(f"reasoning: {(s.reasoning or '(not recorded: hidden thinking)').strip()[:200]}")
     report["runs_total"] = rp.runs
+    if "via" not in report.get("bisect", {}):
+        events.stage("confirm", "done", root=root, collateral=collateral, extra=extra)
+    events.emit("root_cause", step_id=root, file=s.file, line=line, collateral=collateral, extra=extra,
+                trigger=trigger_line(s.trigger), reasoning=(s.reasoning or "").strip()[:400],
+                change=_card(next(d for d in report["session"]["steps"] if d["id"] == root))["change"],
+                runs=rp.runs)
     return rc
