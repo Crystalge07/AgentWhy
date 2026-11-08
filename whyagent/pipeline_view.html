@@ -38,7 +38,7 @@
   .ctl button:hover { color: var(--ink); }
 
   /* ------------------------------------------------ canvas */
-  #view { position: absolute; inset: 0 0 var(--panel-h, 42vh) 0; overflow: hidden;
+  #view { position: absolute; inset: 0 0 var(--panel-h, 30vh) 0; overflow: hidden;
           background-color: var(--canvas); background-image: radial-gradient(var(--dot) 1.4px, transparent 1.4px); background-size: 24px 24px; }
   #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: transform 1s cubic-bezier(.4,0,.2,1); }
   svg#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
@@ -103,30 +103,30 @@
   .pooltag { position: absolute; transform: translate(-50%, 0); font-size: 14px; color: var(--muted); white-space: nowrap; transition: left .9s cubic-bezier(.4,0,.2,1), top .9s, opacity .5s; }
 
   /* ------------------------------------------------ output panel (n8n's node detail view) */
-  #panel { position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 42vh); background: var(--panel); border-top: 1px solid var(--panel-line);
+  #panel { position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 30vh); background: var(--panel); border-top: 1px solid var(--panel-line);
            display: flex; flex-direction: column; z-index: 10; box-shadow: 0 -20px 50px #0006; }
-  .ph { display: flex; align-items: center; gap: 14px; padding: 14px 28px; border-bottom: 1px solid var(--panel-line); }
+  .ph { display: flex; align-items: baseline; gap: 14px; padding: 10px 28px; border-bottom: 1px solid var(--panel-line); }
   .ph .ic { width: 40px; height: 40px; border-radius: 9px; background: var(--node-2); display: grid; place-items: center; }
   .ph .ic svg { width: 24px; height: 24px; stroke: var(--ink); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .ph h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .ph h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
   .ph .step { font-size: 14px; color: var(--muted); }
   .ph .tab { margin-left: auto; font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
-  .pb { flex: 1; overflow: auto; padding: 18px 28px 24px; display: flex; flex-direction: column; gap: 16px; }
-  .say { font-size: 23px; line-height: 1.4; max-width: 1100px; }
+  .pb { flex: 1; overflow: auto; padding: 12px 28px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .say { font-size: 20px; line-height: 1.4; max-width: 1100px; }
   .say b { color: #fff; font-weight: 700; }
   .say .hl { color: var(--run); }
   .say .ok { color: var(--pass); font-weight: 700; } .say .bad { color: var(--fail); font-weight: 700; } .say .odd { color: var(--other); font-weight: 700; }
-  .quote { font-size: 19px; color: var(--ink-2); border-left: 4px solid var(--brand); padding: 4px 0 4px 16px; max-width: 1100px; }
+  .quote { font-size: 17px; color: var(--ink-2); border-left: 4px solid var(--brand); padding: 4px 0 4px 16px; max-width: 1100px; }
   .quote small { display: block; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
   .enter { opacity: 0; transform: translateY(10px); }
   .say, .quote, .card, .chk, .dotc, .agent { transition: opacity .45s, transform .45s, border-color .4s, background .4s, color .4s; }
 
   /* the agent's changes as cards */
-  .cards { display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; padding: 12px 0 14px; }
-  .card { width: 200px; background: var(--node); border: 2px solid var(--edge); border-radius: 12px; padding: 10px 12px 12px; position: relative; }
+  .cards { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; padding: 10px 0 12px; }
+  .card { width: 180px; background: var(--node); border: 2px solid var(--edge); border-radius: 12px; padding: 10px 12px 12px; position: relative; }
   .card .n { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   .card .f { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
-  .card .c { font: 600 14px/1.35 var(--mono); color: var(--ink); margin-top: 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .card .c { font: 600 13px/1.3 var(--mono); color: var(--ink); margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
   .card .tag { position: absolute; top: -13px; left: 10px; font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 6px; letter-spacing: .04em; text-transform: uppercase; }
   .card .tag:empty { display: none; }
   .card.applied { border-color: var(--info); background: #233044; }
@@ -140,7 +140,7 @@
   .card.culprit.undone { opacity: 1; }
 
   .checks { display: flex; gap: 10px; flex-wrap: wrap; }
-  .chk { display: inline-flex; align-items: center; gap: 10px; background: var(--node); border: 2px solid var(--edge); border-radius: 10px; padding: 8px 14px; font-size: 17px; }
+  .chk { display: inline-flex; align-items: center; gap: 10px; background: var(--node); border: 2px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 16px; }
   .chk .r { font-weight: 800; }
   .chk.pass { border-color: var(--pass); } .chk.pass .r { color: var(--pass); }
   .chk.fail { border-color: var(--fail); } .chk.fail .r { color: var(--fail); }
@@ -159,24 +159,24 @@
   .dotc.out { opacity: .3; }
   .dotc.culprit .d { transform: scale(1.3); box-shadow: 0 0 0 7px #ff5a6a33; }
 
-  .lesson { font-size: 27px; font-weight: 700; line-height: 1.35; max-width: 1150px; }
+  .lesson { font-size: 22px; font-weight: 700; line-height: 1.35; max-width: 1150px; }
   .lesson::before { content: "“"; color: var(--brand); }
   .lesson::after { content: "”"; color: var(--brand); }
   .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; padding: 4px 12px; border-radius: 99px; background: var(--node-2); color: var(--ink-2); }
   .arms { display: flex; flex-direction: column; gap: 12px; }
   .arm { display: flex; align-items: center; gap: 12px; }
   .arm .l { width: 190px; font-weight: 700; font-size: 18px; }
-  .agent { width: 58px; height: 58px; border-radius: 12px; background: var(--node); border: 2px dashed var(--edge); display: grid; place-items: center; font-size: 24px; font-weight: 800; color: var(--faint); }
+  .agent { width: 46px; height: 46px; border-radius: 12px; background: var(--node); border: 2px dashed var(--edge); display: grid; place-items: center; font-size: 24px; font-weight: 800; color: var(--faint); }
   .agent.run { border: 2px solid var(--run); color: var(--run); }
   .agent.pass { border: 2px solid var(--pass); background: #22352d; color: var(--pass); }
   .agent.fail { border: 2px solid var(--fail); background: #3a2428; color: var(--fail); }
   .agent.other { border: 2px solid var(--other); background: #2d2840; color: var(--other); }
-  .big { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; }
+  .big { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
   .big.ok { color: var(--pass); } .big.bad { color: var(--fail); } .big.mid { color: var(--blame); } .big.info { color: var(--info); }
   .stats { display: flex; gap: 14px; flex-wrap: wrap; }
   .stat { background: var(--node); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 18px; min-width: 200px; }
   .stat .k { font-size: 14px; color: var(--muted); }
-  .stat .v { font-size: 30px; font-weight: 800; }
+  .stat .v { font-size: 24px; font-weight: 800; }
   .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--brand); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 16px; text-decoration: none; width: fit-content; }
 
   .pick { position: absolute; inset: 64px 0 0 0; overflow: auto; padding: 40px; z-index: 30; background: var(--canvas); }
@@ -200,7 +200,7 @@
 </header>
 <div id="view"><div id="world"><svg id="edges"></svg></div></div>
 <section id="panel">
-  <div class="ph"><span class="ic" id="pic"></span><div><h2 id="pname">Waiting for a run</h2><div class="step" id="pstep"></div></div><span class="tab">Output</span></div>
+  <div class="ph"><div><h2 id="pname">Waiting for a run</h2><div class="step" id="pstep"></div></div><span class="tab">Output</span></div>
   <div class="pb" id="pb"></div>
 </section>
 <section class="pick hidden" id="pick"></section>
@@ -706,7 +706,7 @@ function renderPanel() {
   const k = S.panelFor || "failed";
   const n = NODES.find(x => x.k === k);
   const pb = $("#pb");
-  if (shownPanel !== k) { pb.innerHTML = ""; shownPanel = k; $("#pic").innerHTML = icon(n.i); $("#pname").textContent = n.t; }
+  if (shownPanel !== k) { pb.innerHTML = ""; shownPanel = k; $("#pname").textContent = n.t; }
   const idx = NODES.findIndex(x => x.k === k);
   $("#pstep").textContent = `Step ${idx + 1} of ${NODES.length}`;
   if (S.meta) {
