@@ -179,6 +179,12 @@ def _modifies(command: str, file: str) -> bool:
 
     from .claude_code import _is_view_only
 
+    # A heredoc fed to an interpreter (`python3 - <<'EOF' ... open(p, 'w') ...`) is a script that edits files:
+    # it counts when its body names the file. Other heredocs (commit messages, `cat <<EOF`) are dropped.
+    for m in re.finditer(r"(?:^|[\s;&|(])(\S+)(?:\s+-\S*)*\s*<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\2\b", command, re.S):
+        interp = m[1].rsplit("/", 1)[-1]
+        if re.fullmatch(r"(python[\d.]*|node|ruby|perl|bash|sh|zsh)", interp) and _mentions(m[3], file):
+            return True
     body = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?\n.*?\n\1\b", "", command, flags=re.S)  # drop heredocs
     for part in re.split(r"&&|\|\||;|\||\n", body):
         part = part.strip()

@@ -20,50 +20,65 @@ Those patches live here, never in `payments-demo`, so recorded agents can't see 
 
 ## Try it yourself (for judges)
 
-The demo repo is public at https://github.com/Crystalge07/payments-demo (code only; session transcripts
-live on Entire). `main` is the clean seed. The scenario branches hold the recorded sessions in the table
-under "Recorded so far". These instructions live here, not in that repo, so the agent you record can't
-read them.
+The judge-facing demo repo is **whyagent-demo**:
+
+- Code: https://github.com/Crystalge07/whyagent-demo (its README has the results table and the reports)
+- Sessions: the Entire repo `et/agentwhy/whyagent-demo`, which holds the transcripts
+- The PR whyagent opened: https://github.com/Crystalge07/whyagent-demo/pull/1
+
+The tag `seed` is the clean starting point: the Payments client with Entire enabled, before any
+README. Branch from it, not from `main`. `main`'s README describes the mistakes, and an agent
+working on `main` would read it.
+
+| Branch | Agent | What happened | whyagent result |
+| --- | --- | --- | --- |
+| `scenario-1` | Claude Opus 5.5, not steered | Asked to paginate `list_invoices`. It made `list_invoices()` return one page, moved the "all" behaviour to a new `list_all_invoices()`, and rewrote the contract test. It made every edit with one `python3` heredoc, not the Edit tool. The next commit restores the test. | Root cause: the `list_invoices` edit, in 2 runs. Reruns: 0/6 without the lesson vs 6/6 with it, p = 0.001, VALIDATED. `--pr` opened PR #1 using a passing rerun's fix, re-verified at HEAD. |
+| `scenario-2` | Claude Haiku 5.5, **steered** | The 2b prompt, then "don't add constructor args, change the defaults in config.py, keep the error message change, commit". The next commit restores the retry test. | `--line payments/client.py:37` (the rewritten raise) is **NOT the cause**. Root cause: the `config.py` defaults, in 6 runs. |
+
+Neither model's reasoning is in the transcript (both hide their thinking, and neither wrote text
+before editing), so the reports show the prompt and the exact command or edit instead.
 
 You need Python 3.10+, Docker, Claude Code, the Entire CLI and whyagent (`pip install -e .` in this repo).
 
-1. Clone the demo repo and start a fresh branch from the seed:
+**Rerun an analysis.** This needs read access to the Entire repo, because the session loads from there:
+
+```sh
+entire repo clone /et/agentwhy/whyagent-demo && cd whyagent-demo
+T="python -m pytest -q -p no:cacheprovider"
+git checkout scenario-1 && whyagent --good seed --no-rerun --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
+git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --no-rerun --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
+```
+
+**Record your own session** (scenario 1; a GitHub clone works here, since you record the session):
+
+1. Start from the seed and turn on recording:
    ```sh
-   git clone https://github.com/Crystalge07/payments-demo && cd payments-demo
-   git checkout -b try main
+   git clone https://github.com/Crystalge07/whyagent-demo && cd whyagent-demo
+   git checkout -b try seed
    entire enable --agent claude-code     # then start a NEW Claude Code session in this folder
    ```
 2. Give Claude Code this prompt, unchanged:
    > Add pagination to `list_invoices`: use the API's `page`/`per_page` params with `config.PAGE_SIZE`,
    > and keep `export_invoices_csv` exporting everything. Commit when done.
 3. **What usually happens:** the agent paginates, but changes `list_invoices()` to return only the
-   first page (a breaking change) and rewrites `test_list_invoices_returns_every_invoice` to match.
-   Agents aren't deterministic: if yours gets it right, there's no bug to find. Use the recorded
-   `scenario-1` branch instead (`git checkout scenario-1`, `--good 87dc38e`).
-4. Put the original test back. The agent weakened it, and whyagent pins tests to HEAD:
+   first page and rewrites `test_list_invoices_returns_every_invoice` to match. Agents aren't
+   deterministic. If yours gets it right, there's no bug to find, so use the recorded `scenario-1` instead.
+4. Put the original test back:
    ```sh
-   git checkout main -- tests/test_client.py && git commit -m "Restore the list_invoices test"
+   git checkout seed -- tests/test_client.py && git commit -m "Restore the list_invoices test"
    ```
 5. Run whyagent:
    ```sh
-   whyagent --good main --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice" --open
+   whyagent --good seed --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice" --open
    ```
-   **Expect:** the precheck passes at `main` and fails at HEAD. The guilty commit carries an Entire
-   checkpoint, and whyagent pins the bug to the `list_invoices` edit in about 5 test runs. The report
-   shows the agent's reasoning and the prompt it was working from. Stages 7–8 write a lesson and rerun
-   the agent with and without it (5 runs per arm by default; this takes a while and needs Gemini or
-   Claude credentials). Add `--no-rerun` to stop after the root cause.
-6. Optional: add `--pr` on a fork you can push to. If the lesson is VALIDATED, whyagent opens a PR
-   with a fix verified at HEAD and the rule added to `AGENTS.md`.
+   **Expect:** the precheck passes at `seed` and fails at HEAD. whyagent finds the guilty commit
+   through its Entire checkpoint and pins the bug to the `list_invoices` edit in a few test runs.
+   Stages 7–8 write a lesson and rerun the agent with and without it, which needs Gemini or Claude
+   credentials and takes a while. Add `--no-rerun` to stop after the root cause, or `--pr` (on a
+   fork you can push to) to get a PR when the lesson is validated.
 
-To see the "`git blame` points at the wrong edit" moment without recording anything, use the
-recorded 2b branch (the agent was steered there; see below):
-
-```sh
-git checkout scenario-2b-clean
-whyagent --good f39623e --line payments/client.py:39 --no-rerun \
-  --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
-```
+The older recordings in `payments-demo` (below) are kept for reference. `whyagent-demo` replaces them
+for the demo.
 
 ## Recording a scenario
 

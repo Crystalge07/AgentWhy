@@ -199,7 +199,8 @@ def pr_body(rc: RootCause, report: dict, fix: Fix, rule: str, instructions: str)
     else:
         lines.append(f"Reverts the guilty edit in `{s.file}`.")
     lines += ["", f"Verified at this PR's base: {fix.detail}.", "",
-              "## The rule", "", f"Added to `{instructions}` so agents in this repo follow it from now on:", "",
+              "## The rule", "", f"Added to `{instructions}` so agents in this repo follow it from now on "
+              f"(and `CLAUDE.md` imports `{instructions}`, so Claude Code reads it too):", "",
               f"> {rule}", ""]
     if rr.get("verdict"):
         p = rr.get("p")
@@ -207,6 +208,20 @@ def pr_body(rc: RootCause, report: dict, fix: Fix, rule: str, instructions: str)
                      f"{len(a)} passed, with it {b.count('PASS')}/{len(b)}" + (f" (Fisher p = {p:.3f})" if p is not None else "") + ".")
     lines += ["", "---", "Opened by whyagent `--pr`. Review the diff before merging: the tests check what they check."]
     return "\n".join(lines)
+
+
+def claude_imports(root: Path, instructions: str) -> bool:
+    """Claude Code reads CLAUDE.md, not AGENTS.md: make CLAUDE.md import the rules file. True if it changed."""
+    if Path(instructions).name == "CLAUDE.md":
+        return False
+    p = root / "CLAUDE.md"
+    text = p.read_text(encoding="utf-8") if p.exists() else ""
+    line = f"@{instructions}"
+    if any(ln.strip() == line for ln in text.splitlines()):
+        return False
+    with p.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(("\n" if text and not text.endswith("\n") else "") + ("\n" if text else "") + line + "\n")
+    return True
 
 
 def open_pr(rp, rc: RootCause, fix: Fix, d: str, rule: str, report: dict, instructions: str = "AGENTS.md",
@@ -221,6 +236,8 @@ def open_pr(rp, rc: RootCause, fix: Fix, d: str, rule: str, report: dict, instru
     test = (report.get("meta") or {}).get("test", "")
     append_rule(Path(d) / instructions, rule, provenance(test, s.session_id, s.id, s.file))
     _git(d, "add", "--", instructions)
+    if claude_imports(Path(d), instructions):
+        _git(d, "add", "--", "CLAUDE.md")
     aid = ((report.get("meta") or {}).get("analysis_id") or "")[:6] or os.urandom(3).hex()
     branch = f"whyagent/fix-{Path(s.file).stem}-{aid}"
     m = re.search(r"\S+::\S+", test)

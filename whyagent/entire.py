@@ -82,7 +82,7 @@ BRAIN_SOURCE = "lesson store: local file + Tiger Data when TIGER_DATABASE_URL is
 LESSONS_DDL = "CREATE TABLE IF NOT EXISTS lessons (saved_at TIMESTAMPTZ NOT NULL DEFAULT now(), rec JSONB NOT NULL)"
 
 
-def _tiger_lessons(rec: dict | None = None) -> list[dict]:
+def _tiger_lessons(rec: dict | None = None, timeout: int = 10, quiet: bool = False) -> list[dict]:
     """Shared Brain: validated lessons in Tiger Data, so every teammate's machine sees them.
     Saves `rec` when given; returns all lessons. A no-op ([]) when Tiger is unset or unreachable."""
     import os
@@ -93,14 +93,15 @@ def _tiger_lessons(rec: dict | None = None) -> list[dict]:
     try:
         from .tiger import connect
 
-        with connect() as conn:
+        with connect(timeout=timeout) as conn:
             conn.execute(LESSONS_DDL)
             if rec is not None:
                 conn.execute("INSERT INTO lessons (rec) VALUES (%s::jsonb)", (json.dumps(rec),))
                 return []
             return [r[0] for r in conn.execute("SELECT rec FROM lessons ORDER BY saved_at").fetchall()]
     except Exception as e:  # never let the shared store break an analysis; the local file still works
-        print(f"brain: Tiger lessons unavailable ({type(e).__name__}: {e})", file=sys.stderr)
+        if not quiet:
+            print(f"brain: Tiger lessons unavailable ({type(e).__name__}: {e})", file=sys.stderr)
         return []
 _EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Warning|Failure))\b:?\s*(.*)$")
 
@@ -123,7 +124,7 @@ def error_key(output: str) -> tuple[str, str]:
     return "", ""
 
 
-def _brain_records() -> list[dict]:
+def _brain_records(timeout: int = 10, quiet: bool = False) -> list[dict]:
     """Local lessons plus shared (Tiger) ones, oldest first, each lesson once."""
     p = brain_path()
     out = []
@@ -134,7 +135,7 @@ def _brain_records() -> list[dict]:
             except json.JSONDecodeError:
                 continue
     seen = {(r.get("text"), r.get("saved_at")) for r in out}
-    shared = [r for r in _tiger_lessons() if (r.get("text"), r.get("saved_at")) not in seen]
+    shared = [r for r in _tiger_lessons(timeout=timeout, quiet=quiet) if (r.get("text"), r.get("saved_at")) not in seen]
     return sorted(out + shared, key=lambda r: r.get("saved_at") or "")
 
 
@@ -158,11 +159,32 @@ def brain_lookup(files: list[str], error: str) -> dict | None:
     return best
 
 
+def repo_name(cwd: str = ".") -> str:
+    """owner/repo from the origin (or first) remote's URL, else the folder name. Tags lessons by repo."""
+    import subprocess
+    from pathlib import Path
+
+    for remote in ("origin", None):
+        args = ["git", "remote", "get-url", remote] if remote else ["git", "remote"]
+        p = subprocess.run(args, cwd=cwd, capture_output=True, encoding="utf-8", errors="replace")
+        out = p.stdout.strip()
+        if p.returncode != 0 or not out:
+            continue
+        if remote is None:  # no origin: use the first remote
+            p = subprocess.run(["git", "remote", "get-url", out.split()[0]], cwd=cwd, capture_output=True,
+                               encoding="utf-8", errors="replace")
+            out = p.stdout.strip()
+        parts = [x for x in re.split(r"[/:]", re.sub(r"\.git$", "", out)) if x]
+        if len(parts) >= 2:
+            return "/".join(parts[-2:])
+    return Path(cwd).resolve().name
+
+
 def brain_save(lesson: dict) -> dict:
     """Store a lesson. Only lessons that the counterfactual reruns VALIDATED are accepted.
 
-    Required keys: text, files, failing_output, verdict ("VALIDATED"), p. Optional: checkpoint,
-    session_id, agent, step_id, runs ({"a": [...], "b": [...]}).
+    Required keys: text, files, failing_output, verdict ("VALIDATED"), p. Optional: repo (owner/name),
+    checkpoint, session_id, agent, step_id, runs ({"a": [...], "b": [...]}).
     """
     from datetime import datetime, timezone
 

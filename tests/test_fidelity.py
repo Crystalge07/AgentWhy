@@ -122,6 +122,11 @@ def test_modifies_ignores_commits_viewers_and_heredocs():
     assert not _modifies(commit, f)                          # git add / commit, and the message, don't count
     assert not _modifies("cat payments/config.py && git diff payments/config.py", f)
     assert _modifies("echo 'X = 1' >> payments/config.py", f)
+    # a script heredoc that edits the file counts (Opus 5.5 edits this way); a commit-message heredoc doesn't
+    script = ("python3 - <<'EOF'\np='payments/config.py'; s=open(p).read()\n"
+              "open(p,'w').write(s.replace('MAX_RETRIES = 3','MAX_RETRIES = 1'))\nEOF\npytest -q")
+    assert _modifies(script, f) and not _modifies(script, "payments/client.py")
+    assert not _modifies("cat <<'EOF' > /tmp/notes.txt\nsee payments/config.py\nEOF", f)
 
 
 def _shell_cmd(command, reasoning="r"):

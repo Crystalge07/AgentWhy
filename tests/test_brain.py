@@ -71,7 +71,7 @@ def test_lessons_are_shared_through_tiger(tmp_path, monkeypatch):
 
     import whyagent.tiger
     monkeypatch.setenv("TIGER_DATABASE_URL", "postgres://fake")
-    monkeypatch.setattr(whyagent.tiger, "connect", lambda url=None: Conn())
+    monkeypatch.setattr(whyagent.tiger, "connect", lambda url=None, **kw: Conn())
     entire.brain_save(lesson())
     assert len(table) == 1
     monkeypatch.setenv("WHYAGENT_BRAIN", str(tmp_path / "other-machine.jsonl"))

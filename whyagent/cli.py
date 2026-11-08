@@ -258,6 +258,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     if verdict == "VALIDATED" and source != "brain":
         try:
             entire.brain_save({"text": lesson, "files": [rc.step.file], "failing_output": rc.failing_output,
+                               "repo": entire.repo_name(rp.repo),
                                "verdict": verdict, "p": p, "agent": agent.name, "session_id": rc.step.session_id,
                                "step_id": rc.step.id, "runs": {"a": [r.outcome for r in a_all],
                                                                "b": [r.outcome for r in b_all]}})
@@ -343,7 +344,8 @@ def cmd_brain() -> int:
         runs = r.get("runs") or {}
         a, b = runs.get("a") or [], runs.get("b") or []
         p = r.get("p")
-        print(f"\n[{(r.get('saved_at') or '?')[:16].replace('T', ' ')}] {', '.join(r.get('files') or [])}"
+        print(f"\n[{(r.get('saved_at') or '?')[:16].replace('T', ' ')}] "
+              + (f"{r['repo']}: " if r.get("repo") else "") + f"{', '.join(r.get('files') or [])}"
               + (f" · {r['error_type']}" if r.get("error_type") else "")
               + (f" · p = {p:.3f}" if isinstance(p, (int, float)) else "")
               + (f" · {r['agent']}" if r.get("agent") else "")
@@ -677,6 +679,16 @@ def main(argv=None) -> int:
                         "--instructions. Needs a github.com remote and `gh` logged in")
     p.add_argument("--pr-remote", help="--pr: the git remote to push the PR branch to (default: the first github.com one)")
     p.add_argument("--brain", action="store_true", help="list the validated lessons (local file + Tiger Data) and exit")
+    p.add_argument("--rules", action="store_true",
+                   help="print the validated rules as Markdown for an agent's context, skipping ones already in "
+                        "--instructions, and exit (for a SessionStart hook; prints nothing if there are none)")
+    p.add_argument("--rules-limit", type=int, default=10, help="--rules: at most this many, newest first (default 10)")
+    p.add_argument("--install-hook", action="store_true",
+                   help="add a Claude Code SessionStart hook that runs --rules, so every session (any repo) starts with "
+                        "your validated rules; to the settings in --claude-config, $CLAUDE_CONFIG_DIR or ~/.claude")
+    p.add_argument("--uninstall-hook", action="store_true",
+                   help="remove that hook (do this before recording a demo session: the rules would steer the agent)")
+    p.add_argument("--claude-config", metavar="DIR", help="--install-hook / --uninstall-hook: Claude Code config dir")
     p.add_argument("--model", choices=["gemini", "claude", "mock"],
                    help="who writes the lesson (Stage 7) or, with --live, the rule (default $WHYAGENT_MODEL, else "
                         "gemini). claude = `claude -p` with CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, model "
@@ -700,6 +712,22 @@ def main(argv=None) -> int:
         return cmd_check_entire(args)
     if args.brain:
         return cmd_brain()
+    if args.install_hook or args.uninstall_hook:
+        from .rules import claude_settings_path, hook_command, install_hook, uninstall_hook
+        path = claude_settings_path(args.claude_config)
+        if args.uninstall_hook:
+            print(f"hook: {'removed from' if uninstall_hook(path) else 'not found in'} {path}")
+            return 0
+        print(f"hook: {install_hook(path)} in {path}\n  SessionStart → {hook_command()}\n"
+              "  New Claude Code sessions start with your validated rules. Before recording a demo session, run "
+              "whyagent --uninstall-hook (the rules would steer the agent away from the mistake).")
+        return 0
+    if args.rules:
+        from .rules import rules_markdown
+        text = rules_markdown(instructions=args.instructions, limit=args.rules_limit)
+        if text:
+            print(text)
+        return 0
     if args.serve:
         from .server import serve
         return serve(_history(args), args.port, open_browser=args.open)

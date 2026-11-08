@@ -61,9 +61,11 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
 | `--lesson TEXT` | Test this lesson instead of asking `--model` to write one (without it and without the model's key, Stage 7 is skipped) |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
-| `--pr` | If Stage 8 VALIDATES the lesson, open a GitHub PR: the fix from a passing with-lesson rerun (else the revert of the guilty edit), re-verified at HEAD (target test + suite, tests untouched), plus the rule added to `--instructions`. Done in a temp worktree; needs a github.com remote and `gh` logged in |
+| `--pr` | If Stage 8 VALIDATES the lesson, open a GitHub PR: the fix from a passing with-lesson rerun (else the revert of the guilty edit), re-verified at HEAD (target test + suite, tests untouched), plus the rule added to `--instructions` and an `@AGENTS.md` import in `CLAUDE.md`. Done in a temp worktree; needs a github.com remote and `gh` logged in |
 | `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
 | `--brain` | List every validated lesson (local `~/.whyagent/brain.jsonl` + Tiger Data) with its evidence, and exit |
+| `--rules` | Print the validated rules as Markdown for an agent's context (newest first, max `--rules-limit`, default 10; skips rules already in `--instructions`; Tiger timeout 3 s). Meant for a Claude Code `SessionStart` hook so every session, in any repo, starts with your account-wide rules |
+| `--install-hook` / `--uninstall-hook` | Add or remove the Claude Code `SessionStart` hook that runs `--rules`, in `--claude-config DIR`, `$CLAUDE_CONFIG_DIR` or `~/.claude`. Works on Mac and Windows. **Uninstall before recording a demo session**: the rules would steer the agent away from the mistake |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
 | `--render JSON` | Re-render a saved `report.json` to HTML |
@@ -141,6 +143,7 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 | `whyagent/server.py`, `app.html`, `events.py` | B | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
 | `whyagent/trail.py` | A | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
 | `whyagent/fix_pr.py` | B | `--pr`: pick a fix verified at HEAD (rerun's work or revert), commit it with the rule, push a branch, `gh pr create` |
+| `whyagent/rules.py` | B | `--rules`: account-wide validated rules as Markdown for a SessionStart hook |
 | `whyagent/providers.py` | A + B | Gemini first, Claude fallback for every model call; records which provider answered |
 | `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
 | `whyagent/live/` | B | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |
