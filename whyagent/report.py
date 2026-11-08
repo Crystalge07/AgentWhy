@@ -37,6 +37,8 @@ from pathlib import Path
 from . import events
 from .types import RunResult, State
 
+_FALLBACK_NOTE = re.compile(r"(Claude|Claude Code) (wrote it|ran them) instead|both arms reran with Claude Code")
+
 TEMPLATE = "report_template.html"
 
 
@@ -289,6 +291,8 @@ def build_view(d: dict, db: dict | None = None) -> dict:
         lesson = {"text": live["rule"], "source": "live", "without": arm([c["outcome"] for c in live.get("counterfactual", [])]),
                   "with": arm([after]) if after else None, "p": None, "verdict": None, "validated": False,
                   "saved": False, "live": (live.get("after") or {}).get("label")}
+    # Which model/agent stood in for Gemini is plumbing, not a result: hide old fallback notes.
+    d = {**d, "notes": [x for x in d.get("notes") or [] if not _FALLBACK_NOTE.search(x)]}
     failed = [x for x in d.get("notes", []) if re.match(r"(Lesson|Reruns skipped|Live loop failed)", x)]
     if not lesson:
         lesson_error = failed[0] if failed else ("Not run (--no-rerun)." if cause else "No root cause, so no lesson.")

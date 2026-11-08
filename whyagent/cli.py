@@ -181,7 +181,6 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
             return 0 if args.no_rerun else 1  # the root cause is proven either way; only reruns need a lesson
         for t in tried:
             print(f"lesson: {t} → writing it with Claude")
-            report.note(f"Lesson: {t}; Claude wrote it instead.")
     hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
     print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)",
                                    "claude": " (written by Claude)", "gemini": " (written by Gemini)"}.get(source, "")
@@ -198,7 +197,6 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     agent_name, fell_back = providers.pick_rerun_agent(args.rerun_agent)  # auto: Gemini CLI, else Claude Code
     if fell_back:
         print(f"rerun: {fell_back} → Claude Code reruns")
-        report.note(f"Reruns: {fell_back}; Claude Code ran them instead.")
     agent = agent_by_name(agent_name)
     missing = agent.missing_auth()
     if missing:
@@ -219,7 +217,6 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         # Gemini CLI hit quota/auth mid-run. Both arms must use the same agent, so redo all of Stage 8.
         providers.mark_gemini_down(rr._abort)
         print(f"rerun: Gemini CLI failed ({rr._abort[:120]}) → rerunning both arms with Claude Code")
-        report.note(f"Reruns: Gemini CLI failed ({rr._abort[:200]}); both arms reran with Claude Code.")
         agent = agent_by_name("claude-code")
         rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
         a_all, b_all = rr.run(rc, lesson, args.runs)
