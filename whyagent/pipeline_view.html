@@ -230,7 +230,7 @@ const icon = k => `<svg viewBox="0 0 24 24">${I[k]}</svg>`;
 
 // The workflow, left to right. Plain words: the audience doesn't need to know the code.
 const NODES = [
-  { k: "failed",     i: "bolt",   t: "A test broke", trigger: true },
+  { k: "failed",     i: "bolt",   t: "A test failed", trigger: true },
   { k: "precheck",   i: "repeat", t: "Reproduce it" },
   { k: "commit",     i: "commit", t: "Find the commit" },
   { k: "entire",     i: "entire", t: "Entire: open the session" },
@@ -399,6 +399,7 @@ function onStage(ev) {
     S.stopWhy = ev.why;
   }
 }
+const GOAL_TEXT = "A test in this project broke after an AI coding agent worked on it. <b>Goal:</b> find the exact change that broke it, prove it, and learn from it.";
 const VERDICT = {
   VALIDATED:    ["The lesson works", "ok", "Agents that read the lesson stop making this mistake. It's saved for next time."],
   PROMISING:    ["Looks helpful", "mid", "Agents did better with the lesson, but not by enough to be sure yet."],
@@ -543,9 +544,8 @@ const say = (pb, key, html, cls = "say") => put(pb, key, cls, html);
 
 const PANELS = {
   failed(pb) {
-    say(pb, "a", `The test <b>“${esc(humanTest(S.meta && S.meta.test))}”</b> is failing after an AI agent worked on this code.`);
-    if (S.failure) say(pb, "e", `<small>The error</small>${esc(humanError(S.failure.error || S.failure.signature))}`, "quote");
-    say(pb, "q", `<span class="hl">Question:</span> which of the agent's decisions caused it? We'll answer with real test runs, not guesses.`);
+    say(pb, "a", `${GOAL_TEXT}`);
+    say(pb, "q", `No guessing: every answer below comes from actually running the test.`);
   },
   precheck(pb) {
     say(pb, "a", "First, make sure the failure is real: run the test on the code <b>before the agent</b> and on the code <b>now</b>, several times each.");
@@ -670,7 +670,7 @@ const PANELS = {
   result(pb) {
     if (!S.done) { say(pb, "w", "Waiting for the run to finish."); return; }
     const rc = S.rc;
-    say(pb, "a", rc ? `<b>Edit ${disp(rc.step_id)}</b> broke <b>“${esc(humanTest(S.meta && S.meta.test))}”</b>. Not a guess: proven by running the test.`
+    say(pb, "a", rc ? `<b>Edit ${disp(rc.step_id)}</b> of the agent's work broke the test. Not a guess: proven by running it.`
       : `No single edit could be proven. ${esc(S.stopWhy || "")}`);
     const dur = S.done.t && S.t0 ? Math.round(S.done.t - S.t0) : null;
     const v = S.rerun && S.rerun.verdict ? (VERDICT[S.rerun.verdict] || [S.rerun.verdict])[0] : S.lesson ? "Written" : "—";
@@ -709,6 +709,11 @@ function renderPanel() {
   if (shownPanel !== k) { pb.innerHTML = ""; shownPanel = k; $("#pname").textContent = n.t; }
   const idx = NODES.findIndex(x => x.k === k);
   $("#pstep").textContent = `Step ${idx + 1} of ${NODES.length}`;
+  if (!S.meta) {  // before Play: just the goal
+    $("#pname").textContent = "The goal"; $("#pstep").textContent = "";
+    say(pb, "goal", GOAL_TEXT);
+    return;
+  }
   if (S.meta) {
     const before = pb.scrollHeight;
     PANELS[k](pb);
@@ -718,7 +723,7 @@ function renderPanel() {
 
 function render() {
   if (!S.pinned) { const a = activeNode(); if (a) S.panelFor = a; }
-  $("#title").innerHTML = S.meta ? `Why did <b>“${esc(humanTest(S.meta.test))}”</b> break?` : "";
+  $("#title").innerHTML = `A test broke. <b>Which change caused it, and why?</b>`;
   renderCanvas();
   renderPanel();
 }
