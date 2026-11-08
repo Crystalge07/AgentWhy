@@ -27,7 +27,7 @@
   .hl { background: var(--hi); padding: 0 .12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 
   /* The page sits inside one ruled column, like a printed spec sheet. */
-  .frame { max-width: 1200px; margin: 0 auto; border-left: 1px solid var(--line); border-right: 1px solid var(--line); background: var(--bg); min-height: 100vh; }
+  .frame { background: var(--bg); min-height: 100vh; }
   .row { border-top: 1px solid var(--line); padding: 48px 56px; }
   @media (max-width: 760px) { .row { padding: 32px 16px; } }
 
@@ -48,6 +48,7 @@
   .meta b { color: var(--ink-2); font-weight: 500; }
   .hero h1 { font-size: clamp(30px, 4.2vw, 52px); line-height: 1.12; margin: 22px 0 18px; max-width: 980px; }
   .hero h1 code { overflow-wrap: anywhere; font-size: .78em; font-weight: 500; letter-spacing: -0.01em; }
+  .hero h1 .j { font-size: .78em; }  /* "to", "broke": sized like the code around them */
   .who { color: var(--muted); font-size: 15px; }
   .who code { color: var(--ink-2); }
 
@@ -458,7 +459,7 @@ function renderHero() {
     $("#versus").classList.add("hidden");
     return;
   }
-  $("#headline").innerHTML = `<span class="hl">The agent's edit #${r.cause.edit}</span> to <code>${esc(r.cause.file)}</code> broke <code>${esc(r.testName)}</code>.`;
+  $("#headline").innerHTML = `<span class="hl">The agent's edit #${r.cause.edit}</span> <span class="j">to</span> <code>${esc(r.cause.file)}</code> <span class="j">broke</span> <code>${esc(r.testName)}</code>.`;
   $("#who").innerHTML = `${esc(r.agent)} · session <code>${esc(r.session)}</code> · commit <code>${esc(r.commit)}</code>${r.cause.line ? ` · line ${r.cause.line}` : ""}`;
   const short = c.diff.slice(0, 8), more = c.diff.length - short.length;
   $("#story").innerHTML = `
