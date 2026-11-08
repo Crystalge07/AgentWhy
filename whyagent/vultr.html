@@ -176,12 +176,12 @@ function render(d) {
   const main = c.reduce((a, b) => (b.speedup || 0) > (a.speedup || 0) ? b : a);
   const max = Math.max(...c.flatMap(x => [x.laptop.wall_s, x.vm.wall_s]));
   const lane = (who, r, color) => `<div class="lane"><b>${esc(who)}</b><div class="track"><div class="fill" data-w="${100 * r.wall_s / max}" style="background:${color}"
-      data-tip="<b>${esc(who)}</b>${secs(r.wall_s)} start to finish<br>${fmt(r.test_runs)} test runs · ${(r.ms_per_run / 1000).toFixed(1)} s per run · ${r.workers || "?"} workers">${secs(r.wall_s)}</div></div></div>`;
+      data-tip="<b>${esc(who)}</b>${secs(r.wall_s)} to the proven cause<br>${fmt(r.test_runs)} test runs · ${(r.ms_per_run / 1000).toFixed(1)} s per run · ${r.workers || "?"} workers">${secs(r.wall_s)}</div></div></div>`;
   $("#body").outerHTML = `
   <section class="card">
     <div class="hero">
       <div><div class="big">${main.speedup}×<small>faster</small></div>
-        <p class="sub" style="margin-top:10px">${esc(BUG[main.bug] || "The same bug")}: ${secs(main.laptop.wall_s)} on a laptop, ${secs(main.vm.wall_s)} on Vultr, start to finish.</p></div>
+        <p class="sub" style="margin-top:10px">${esc(BUG[main.bug] || "The same bug")}: ${secs(main.laptop.wall_s)} on a laptop, ${secs(main.vm.wall_s)} on Vultr, to find and prove the cause.</p></div>
       <div class="race">${c.map((x, i) => `
         <div class="sub" style="margin-top:${i ? 10 : 0}px">${esc(BUG[x.bug] || x.bug)} · same bug, same ${x.vm.workers || 8} parallel workers</div>
         ${lane(x.laptop.host, x.laptop, css("--c-laptop"))}${lane("Vultr VM", x.vm, css("--c-vultr"))}`).join("")}
@@ -198,7 +198,7 @@ function render(d) {
   <section class="card">
     <h2>Every measured run</h2>
     <div class="sub">Each analysis records where it ran (the VM is detected automatically). From Tiger Data in ${d.speed.ms} ms.</div>
-    <table class="data"><tr><th>Bug</th><th>Machine</th><th class="n">Workers</th><th class="n">Test runs</th><th class="n">Per run</th><th class="n">Start to finish</th></tr>
+    <table class="data"><tr><th>Bug</th><th>Machine</th><th class="n">Workers</th><th class="n">Test runs</th><th class="n">Per run</th><th class="n">Time to the cause</th></tr>
       ${d.speed.rows.slice().reverse().map(r => `<tr><td>${esc(BUG[bugOf(r.label)] || bugOf(r.label))}</td><td>${esc(r.host)}</td><td class="n">${r.workers ?? ""}</td><td class="n">${fmt(r.test_runs)}</td>
           <td class="n">${r.ms_per_run ? (r.ms_per_run / 1000).toFixed(1) + " s" : ""}</td><td class="n">${secs(r.wall_s)}</td></tr>`).join("")}
     </table>

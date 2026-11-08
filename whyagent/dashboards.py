@@ -46,12 +46,13 @@ SELECT saved_at, rec->>'text' AS text, rec->>'verdict' AS verdict, (rec->>'p')::
 FROM lessons ORDER BY saved_at""",
     "speed": """
 SELECT a.analysis_id, a.label, a.host, a.workers, a.cpus,
-       extract(epoch FROM a.finished - a.started)::float AS wall_s,
+       -- time to the proven root cause: start to the last test run (lesson writing and reruns depend on model APIs)
+       extract(epoch FROM max(r.time) FILTER (WHERE r.stage <> 'rerun') - a.started)::float AS wall_s,
        count(*) FILTER (WHERE NOT r.cached AND r.stage <> 'rerun') AS test_runs,
        avg(r.duration_ms) FILTER (WHERE NOT r.cached AND r.stage <> 'rerun')::float AS ms_per_run,
        a.started
 FROM analyses a JOIN runs r USING (analysis_id)
-WHERE a.host IS NOT NULL AND a.finished IS NOT NULL AND a.label NOT LIKE 'repo:%'
+WHERE a.host IS NOT NULL AND a.label NOT LIKE 'repo:%'
 GROUP BY a.analysis_id ORDER BY a.started""",
 }
 
