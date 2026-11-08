@@ -227,12 +227,9 @@ _CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/>
 # Light/dark: the saved choice is applied in <head> before first paint; with none saved the system theme wins.
 THEME_HEAD = ("<script>try{const t=localStorage.getItem('agentwhy-theme');"
               "if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>")
-THEME_TOGGLE = (
-    '<button type="button" class="theme-toggle" aria-label="Switch light or dark theme" title="Light or dark">'
-    '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/>'
-    '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
-    '<svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
-    '</button>'
+THEME_TOGGLE = (  # bottom-right corner of every page: shows the theme you'd switch to
+    '<button type="button" class="theme-fab" aria-label="Switch light or dark theme" title="Light or dark">'
+    '<span class="moon">🌙</span><span class="sun">☀️</span></button>'
     "<script>document.currentScript.previousElementSibling.onclick=()=>{const r=document.documentElement,"
     "d=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches,t=d?'light':'dark';"
     "r.dataset.theme=t;try{localStorage.setItem('agentwhy-theme',t)}catch(e){}}</script>")
@@ -247,11 +244,11 @@ def site_bar(current: str, extra: str = "") -> str:
     return (f'<header class="site-bar"><a class="site-logo" href="/live">agent<i>why</i></a>{extra}<span class="site-sp"></span>'
             f'<nav class="site-nav" aria-label="Site"><a href="/live"{cur("live")}>Pipeline</a><a href="/"{cur("results")}>Results</a>'
             f'<div class="site-menu{menu_cur}"><button type="button" aria-expanded="false" aria-haspopup="true">Built with{_CHEVRON}</button>'
-            f'<div class="site-menu-list" hidden>{items}</div></div></nav>{THEME_TOGGLE}</header>'
+            f'<div class="site-menu-list" hidden>{items}</div></div></nav></header>'
             "<script>(()=>{const m=document.currentScript.previousElementSibling.querySelector('.site-menu'),b=m.querySelector('button'),"
             "l=m.querySelector('.site-menu-list'),set=o=>{l.hidden=!o;b.setAttribute('aria-expanded',o)};"
             "b.onclick=e=>{e.stopPropagation();set(l.hidden)};document.addEventListener('click',e=>{if(!m.contains(e.target))set(false)});"
-            "document.addEventListener('keydown',e=>{if(e.key==='Escape')set(false)})})()</script>")
+            "document.addEventListener('keydown',e=>{if(e.key==='Escape')set(false)})})()</script>" + THEME_TOGGLE)
 
 
 def _page(name: str, current: str) -> str:
@@ -265,7 +262,8 @@ def _page(name: str, current: str) -> str:
 def _back_link(html: str) -> str:
     """The saved report (a standalone file), given the site's top bar and stylesheet."""
     html = html.replace("</head>", '<link rel="stylesheet" href="/site.css"></head>', 1)
-    return re.sub(r'<nav class="bar" aria-label="Report navigation">\s*<div class="logo">agentwhy <span>report</span></div>',
+    html = re.sub(r"<!--theme-fab-->.*?<!--/theme-fab-->", "", html, count=1, flags=re.S)
+    return re.sub(r'<nav class="bar" aria-label="Report navigation">\s*<div class="logo">(?:agentwhy|whyagent) <span>report</span></div>',
                   lambda _: site_bar("results") + '<nav class="bar sub-bar" aria-label="Report navigation">', html, count=1)
 
 

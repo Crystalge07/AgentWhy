@@ -33,7 +33,16 @@
   /* ------------------------------------------------ canvas */
   #view { position: absolute; top: var(--bar-h); left: 0; right: 0; bottom: var(--panel-h, 30vh); overflow: hidden;
           background-color: var(--canvas); background-image: radial-gradient(var(--dot) 1.2px, transparent 1.2px); background-size: 24px 24px; }
+  #view { cursor: grab; touch-action: none; }
+  #view.dragging { cursor: grabbing; }
   #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: transform 1s cubic-bezier(.4,0,.2,1); }
+  #view.dragging #world, #world.instant { transition: none; }
+  /* camera controls: zoom, and back to following the run */
+  .cam { position: absolute; left: 16px; bottom: 16px; z-index: 5; display: flex; gap: 2px; border: 1px solid var(--line-2); background: var(--paper); padding: 3px; }
+  .cam button { border: 0; background: transparent; min-width: 32px; height: 30px; padding: 0 9px; cursor: pointer; font-size: 15px; font-weight: 500; color: var(--ink-2); }
+  .cam button:hover { background: var(--wash); }
+  .cam button.on { background: var(--ink); color: var(--paper); }
+  .cam .pct { min-width: 46px; font: 500 12px var(--mono); color: var(--muted); display: grid; place-items: center; }
   svg#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
   .e { fill: none; stroke: var(--edge); stroke-width: 2; transition: stroke .5s, opacity .5s; }
   .e.done { stroke: var(--ink-2); }
@@ -176,7 +185,13 @@
     <button id="next" title="N or →">Next step</button>
     <button id="restart" title="R">Restart</button>
   </span>-->
-<div id="view"><div id="world"><svg id="edges"></svg></div></div>
+<div id="view"><div id="world"><svg id="edges"></svg></div>
+  <div class="cam" id="cam" title="Drag to move · scroll or pinch to zoom · click a step to zoom onto it">
+    <button type="button" id="zoomOut" aria-label="Zoom out">−</button><span class="pct" id="zoomPct">100%</span>
+    <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
+    <button type="button" id="follow" class="on" aria-label="Follow the run">Follow</button>
+  </div>
+</div>
 <section id="panel">
   <div class="ph"><div><h2 id="pname">Waiting for a run</h2><span class="step" id="pstep"></span></div><span class="tab">Output</span></div>
   <div class="pb" id="pb"></div>
@@ -409,7 +424,7 @@ function buildCanvas() {
     el.innerHTML = `<div class="tilebox"><div class="tile">${icon(n.i)}</div><span class="port in"></span><span class="port out"></span><span class="badge"></span></div>
       <div class="lab">${esc(n.t)}</div><div class="sub"></div>`;
     el.style.transform = "translate(-50%, -56px)";
-    el.onclick = () => { S.panelFor = n.k; S.pinned = true; render(); };
+    el.onclick = () => { if (dragMoved) return; S.panelFor = n.k; S.pinned = true; render(); focusOn(POS[n.k], NODE_Y); };
     w.appendChild(el);
     const lab = document.createElement("div");
     lab.className = "elabel"; lab.id = "l-" + n.k;
@@ -486,8 +501,72 @@ function renderCanvas() {
     x = vw / 2 - POS[focus] * scale;
     y = anchor ? 110 : Math.max(150, vh / 2 - 40 * scale);
   }
-  if (camX !== x + "," + y + "," + scale) { camX = x + "," + y + "," + scale; $("#world").style.transform = `translate(${x}px, ${y}px) scale(${scale})`; }
+  if (cam) return;  // the viewer moved the camera: leave it where they put it until they press Follow
+  if (camX !== x + "," + y + "," + scale) { camX = x + "," + y + "," + scale; setCam({ x, y, s: scale }, true); }
 }
+
+// ------------------------------------------------ camera: drag to pan, wheel/pinch to zoom, click a step to focus
+let cam = null, live = { x: 0, y: 0, s: 1 }, dragMoved = false;
+const ZMIN = .3, ZMAX = 2.5;
+function setCam(c, animate) {
+  live = c;
+  const w = $("#world");
+  w.classList.toggle("instant", !animate);
+  w.style.transform = `translate(${c.x}px, ${c.y}px) scale(${c.s})`;
+  $("#zoomPct").textContent = Math.round(c.s * 100) + "%";
+}
+function manual(c, animate) {
+  cam = c; setCam(c, animate);
+  $("#follow").classList.remove("on");
+}
+function zoomAt(px, py, factor, animate) {  // keep the world point under (px, py) still
+  const s = Math.max(ZMIN, Math.min(ZMAX, live.s * factor));
+  manual({ x: px - (px - live.x) * s / live.s, y: py - (py - live.y) * s / live.s, s }, animate);
+}
+function focusOn(wx, wy) {  // centre a world point, zoomed in a little if we're zoomed out
+  const v = $("#view"), s = Math.max(live.s, 1.25);
+  manual({ x: v.clientWidth / 2 - wx * s, y: v.clientHeight / 2 - (wy + 30) * s, s }, true);
+}
+function follow() { cam = null; camX = null; $("#follow").classList.add("on"); if (S) renderCanvas(); }
+(() => {
+  const v = $("#view");
+  let start = null;
+  v.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest(".cam")) return;
+    start = { px: e.clientX, py: e.clientY, x: live.x, y: live.y, id: e.pointerId };
+    dragMoved = false;
+  });
+  v.addEventListener("pointermove", e => {
+    if (!start || e.pointerId !== start.id) return;
+    const dx = e.clientX - start.px, dy = e.clientY - start.py;
+    if (!dragMoved && Math.hypot(dx, dy) < 4) return;  // a click, not a drag
+    if (!dragMoved) { dragMoved = true; v.classList.add("dragging"); v.setPointerCapture(e.pointerId); }
+    manual({ x: start.x + dx, y: start.y + dy, s: live.s }, false);
+  });
+  const end = () => { start = null; v.classList.remove("dragging"); setTimeout(() => { dragMoved = false; }, 0); };
+  v.addEventListener("pointerup", end); v.addEventListener("pointercancel", end);
+  v.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = v.getBoundingClientRect();
+    // pinch and ctrl+wheel zoom; a plain wheel zooms too, gently
+    zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0015)), false);
+  }, { passive: false });
+  v.addEventListener("dblclick", e => {
+    if (e.target.closest(".cam, .node")) return;
+    const r = v.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, 1.6, true);
+  });
+  const centre = f => zoomAt(v.clientWidth / 2, v.clientHeight / 2, f, true);
+  $("#zoomIn").onclick = () => centre(1.25);
+  $("#zoomOut").onclick = () => centre(1 / 1.25);
+  $("#follow").onclick = follow;
+  document.addEventListener("keydown", e => {
+    if (e.target.closest("input, textarea")) return;
+    if (e.key === "+" || e.key === "=") centre(1.25);
+    else if (e.key === "-" || e.key === "_") centre(1 / 1.25);
+    else if (e.key === "0" || e.key === "f") follow();
+  });
+})();
 function poolAnchor() {
   const a = activeNode();
   if (a && (STAGE_NODE[a] || a === "rerun")) return a;
@@ -706,7 +785,7 @@ let ID = parts[1] || null;
 const REPLAY = new URLSearchParams(location.search).has("replay");
 let paused = true, stepping = false, timer = null, queue = [], qi = 0;
 
-function reset() { S = fresh(); shownPanel = null; $("#pb").innerHTML = ""; buildCanvas(); render(); }
+function reset() { S = fresh(); shownPanel = null; $("#pb").innerHTML = ""; cam = null; camX = null; $("#follow").classList.add("on"); buildCanvas(); render(); }
 function handle(ev) { apply(ev); render(); }
 
 function startLive() {

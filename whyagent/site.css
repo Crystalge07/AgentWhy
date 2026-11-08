@@ -43,18 +43,17 @@
   color-scheme: dark;
 }
 
-/* light/dark toggle (top bar, and the standalone report's own bar) */
-.theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none;
-                border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); cursor: pointer; padding: 0; }
-.theme-toggle:hover { background: var(--wash); }
-.theme-toggle svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
-.theme-toggle .moon, :root[data-theme="dark"] .theme-toggle .sun { display: none; }
-:root[data-theme="dark"] .theme-toggle .moon { display: block; }
+/* light/dark switch: an emoji button in the bottom-right corner of every page */
+.theme-fab { position: fixed; right: 16px; bottom: 16px; z-index: 100; width: 44px; height: 44px; border-radius: 50%;
+             border: 1px solid var(--line-2); background: var(--paper); box-shadow: 0 4px 14px var(--shadow, rgba(0,0,0,.12));
+             cursor: pointer; padding: 0; font-size: 21px; line-height: 1; display: grid; place-items: center; transition: transform .15s; }
+.theme-fab:hover { transform: scale(1.08); }
+.theme-fab .sun, :root[data-theme="dark"] .theme-fab .moon { display: none; }
+:root[data-theme="dark"] .theme-fab .sun { display: inline; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-toggle .sun { display: none; }
-  :root:not([data-theme="light"]) .theme-toggle .moon { display: block; }
+  :root:not([data-theme="light"]) .theme-fab .moon { display: none; }
+  :root:not([data-theme="light"]) .theme-fab .sun { display: inline; }
 }
-.sub-bar .theme-toggle { display: none !important; }  /* a served report already has the site bar's toggle */
 
 /* ---------------------------------------------------------------- top bar (same on every page) */
 .site-bar { position: sticky; top: 0; z-index: 40; height: var(--bar-h); display: flex; align-items: center; gap: 20px;
