@@ -61,6 +61,9 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
 | `--lesson TEXT` | Test this lesson instead of asking `--model` to write one (without it and without the model's key, Stage 7 is skipped) |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
+| `--pr` | If Stage 8 VALIDATES the lesson, open a GitHub PR: the fix from a passing with-lesson rerun (else the revert of the guilty edit), re-verified at HEAD (target test + suite, tests untouched), plus the rule added to `--instructions`. Done in a temp worktree; needs a github.com remote and `gh` logged in |
+| `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
+| `--brain` | List every validated lesson (local `~/.whyagent/brain.jsonl` + Tiger Data) with its evidence, and exit |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
 | `--render JSON` | Re-render a saved `report.json` to HTML |
@@ -69,7 +72,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--check-entire` | Smoke-test the Entire connection |
 | `--live` | After the root cause, run the live loop instead of stages 7–8 (see below). Works after a full analysis or with `--root-cause` |
 | `--yes` | `--live`: approve the rule without asking (scripted demo runs) |
-| `--instructions PATH` | `--live`: the agent instructions file the rule is added to (default `AGENTS.md`) |
+| `--instructions PATH` | `--live` / `--pr`: the agent instructions file the rule is added to (default `AGENTS.md`) |
 | `--model gemini\|claude\|mock` | Who writes the Stage 7 lesson (or, with `--live`, the rule). Default `$WHYAGENT_MODEL`, else `gemini`. `claude` runs `claude -p` with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` and `$WHYAGENT_CLAUDE_MODEL`, and makes `claude-code` the default rerun agent. `mock` = canned responses for the seeded demo repo (scenario 2b), no network, `--live` only |
 
 ## How it works
@@ -137,6 +140,7 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 | `whyagent/report.py`, `report_template.html` | A + B | `report.json` + self-contained HTML report (Report tab + Tiger Data run-data tab), built from real pipeline data |
 | `whyagent/server.py`, `app.html`, `events.py` | B | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
 | `whyagent/trail.py` | A | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
+| `whyagent/fix_pr.py` | B | `--pr`: pick a fix verified at HEAD (rerun's work or revert), commit it with the rule, push a branch, `gh pr create` |
 | `whyagent/providers.py` | A + B | Gemini first, Claude fallback for every model call; records which provider answered |
 | `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
 | `whyagent/live/` | B | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |

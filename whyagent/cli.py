@@ -211,6 +211,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     if args.runs < 4:
         print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
+    rr.capture_diff = bool(getattr(args, "pr", False))  # --pr builds its fix from a passing rerun's diff
     a_all, b_all = rr.run(rc, lesson, args.runs)
     if (args.rerun_agent == "auto" and agent.name == "gemini-cli" and rr._abort
             and providers.claude_configured()):
@@ -219,6 +220,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"rerun: Gemini CLI failed ({rr._abort[:120]}) → rerunning both arms with Claude Code")
         agent = agent_by_name("claude-code")
         rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
+        rr.capture_diff = bool(getattr(args, "pr", False))
         a_all, b_all = rr.run(rc, lesson, args.runs)
     if rr.excluded:
         print(f"rerun: {len(rr.excluded)} test(s) added by the session aren't required of reruns")
@@ -258,7 +260,37 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
                        "p": p, "verdict": verdict, "saved_to_brain": saved,
                        "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
+    if getattr(args, "pr", False):
+        stage_pr(rc, rp, rr, b_all, lesson, verdict, args, report)
     return 0
+
+
+def stage_pr(rc: RootCause, rp, rr, b_all, lesson: str, verdict: str, args, report: Report) -> None:
+    """--pr: open a GitHub PR with a fix verified at HEAD and the rule in --instructions. Never fails the analysis."""
+    from .fix_pr import FixError, make_pr
+
+    if verdict != "VALIDATED":
+        print(f"pr: skipped, the lesson wasn't validated ({verdict})")
+        report["pr"] = {"opened": False, "why": f"lesson {verdict}, not VALIDATED"}
+        return
+    print(f"pr: finding a fix that passes at HEAD, rule → {args.instructions}…")
+    try:
+        pr = make_pr(rp, rr, rc, b_all, lesson, report, instructions=args.instructions, remote=args.pr_remote)
+    except FixError as e:
+        print(f"pr: not opened, {e}")
+        report.note(f"PR not opened: {e}")
+        report["pr"] = {"opened": False, "why": str(e)}
+        return
+    except Exception as e:  # noqa: BLE001 — the analysis already succeeded
+        print(f"pr: not opened ({type(e).__name__}: {e})")
+        report.note(f"PR not opened: {type(e).__name__}: {e}")
+        report["pr"] = {"opened": False, "why": f"{type(e).__name__}: {e}"}
+        return
+    print(f"pr: opened {pr['url']} ({'rerun fix' if pr['fix'] == 'rerun' else 'revert'}, branch {pr['branch']})")
+    if pr.get("warning"):
+        print(f"pr: note: {pr['warning']}")
+        report.note(f"PR: {pr['warning']}")
+    report["pr"] = {"opened": True, **pr}
 
 
 def stage_live(rc: RootCause, rp, args, report: Report, checkpoint: str | None) -> int:
@@ -290,6 +322,24 @@ def stage_live(rc: RootCause, rp, args, report: Report, checkpoint: str | None) 
         report.note(f"Live loop failed at {e.stage}: {e.why}")
         return 2
     return 0 if report["live"]["after"]["outcome"] == "PASS" else 1
+
+
+def cmd_brain() -> int:
+    """--brain: every validated lesson, oldest first, with its evidence."""
+    recs = entire._brain_records()
+    where = str(entire.brain_path()) + (" + Tiger Data" if os.environ.get("TIGER_DATABASE_URL") else "")
+    print(f"{len(recs)} validated lesson(s) ({where})")
+    for r in recs:
+        runs = r.get("runs") or {}
+        a, b = runs.get("a") or [], runs.get("b") or []
+        p = r.get("p")
+        print(f"\n[{(r.get('saved_at') or '?')[:16].replace('T', ' ')}] {', '.join(r.get('files') or [])}"
+              + (f" · {r['error_type']}" if r.get("error_type") else "")
+              + (f" · p = {p:.3f}" if isinstance(p, (int, float)) else "")
+              + (f" · {r['agent']}" if r.get("agent") else "")
+              + (f" · without {a.count('PASS')}/{len(a)}, with {b.count('PASS')}/{len(b)} pass" if a or b else ""))
+        print(f"  {r.get('text')}")
+    return 0
 
 
 def cmd_root_cause(args) -> int:
@@ -594,7 +644,13 @@ def main(argv=None) -> int:
                         "rewind, rerun the agent with it and verify (replaces stages 7-8; never touches Brain or Tiger)")
     p.add_argument("--yes", action="store_true", help="--live: approve the rule without asking")
     p.add_argument("--instructions", default="AGENTS.md",
-                   help="--live: the agent instructions file the rule is added to (default AGENTS.md)")
+                   help="--live / --pr: the agent instructions file the rule is added to (default AGENTS.md)")
+    p.add_argument("--pr", action="store_true",
+                   help="if Stage 8 VALIDATES the lesson: open a GitHub PR with a fix verified at HEAD (a passing "
+                        "with-lesson rerun's work, else the revert of the guilty edit) and the rule added to "
+                        "--instructions. Needs a github.com remote and `gh` logged in")
+    p.add_argument("--pr-remote", help="--pr: the git remote to push the PR branch to (default: the first github.com one)")
+    p.add_argument("--brain", action="store_true", help="list the validated lessons (local file + Tiger Data) and exit")
     p.add_argument("--model", choices=["gemini", "claude", "mock"],
                    help="who writes the lesson (Stage 7) or, with --live, the rule (default $WHYAGENT_MODEL, else "
                         "gemini). claude = `claude -p` with CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, model "
@@ -606,14 +662,18 @@ def main(argv=None) -> int:
         i = shown.index("--id")
         del shown[i:i + 2]
     args.command = "whyagent " + shlex.join(shown)  # shown on the report
-    if args.live and (args.trail or args.lesson or args.no_rerun):
-        p.error("--live can't be combined with --trail, --lesson or --no-rerun")
+    if args.live and (args.trail or args.lesson or args.no_rerun or args.pr):
+        p.error("--live can't be combined with --trail, --lesson, --no-rerun or --pr")
+    if args.pr and args.no_rerun:
+        p.error("--pr needs the reruns (it only opens a PR for a VALIDATED lesson)")
     if (args.yes or args.model == "mock") and not args.live:
         p.error("--yes and --model mock only apply to --live")
     from .model import DEFAULT_AGENT, model_name
     args.rerun_agent = args.rerun_agent or DEFAULT_AGENT.get(model_name(args.model), "gemini-cli")
     if args.check_entire:
         return cmd_check_entire(args)
+    if args.brain:
+        return cmd_brain()
     if args.serve:
         from .server import serve
         return serve(_history(args), args.port, open_browser=args.open)
