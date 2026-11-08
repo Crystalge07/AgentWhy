@@ -422,7 +422,7 @@ def cmd_analyze(args) -> int:
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line,
                     command=getattr(args, "command", None))
-    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {args.test}",
+    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {args.test}", workers=args.workers,
                     url="" if args.live else None)  # --live: no Tiger
     report["meta"]["analysis_id"] = runlog.analysis_id  # joins this report to its Tiger rows
     _start_events(args, report, runlog.analysis_id)

@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 -- added after launch; whyagent runs this when it writes a report
 ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER;
+-- where it ran (Vultr VM vs. a laptop) and when it finished: the Vultr speed comparison
+ALTER TABLE analyses ADD COLUMN IF NOT EXISTS host TEXT, ADD COLUMN IF NOT EXISTS cpus INTEGER,
+    ADD COLUMN IF NOT EXISTS workers INTEGER, ADD COLUMN IF NOT EXISTS finished TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS runs (
     time         TIMESTAMPTZ NOT NULL DEFAULT now(),

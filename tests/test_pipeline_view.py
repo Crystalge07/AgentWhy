@@ -102,3 +102,14 @@ def test_decoy_story_in_events(tmp_path, recording):
     assert bisect_tests and all(e["ids"] == by[("bisect", "start")]["kept"][:len(e["ids"])] for e in bisect_tests)
     [root] = [e for e in evs if e["type"] == "root_cause"]
     assert root["step_id"] == 3 and root["file"] == "calc/config.py"
+
+
+def test_host_label(tmp_path, monkeypatch):
+    from whyagent.tiger import host_label
+    monkeypatch.delenv("WHYAGENT_HOST", raising=False)
+    vendor = tmp_path / "sys_vendor"
+    vendor.write_text("Vultr\n")
+    assert host_label(str(vendor)) == "Vultr VM"
+    assert host_label(str(tmp_path / "missing")) != "Vultr VM"
+    monkeypatch.setenv("WHYAGENT_HOST", "Crystal's Mac")
+    assert host_label(str(vendor)) == "Crystal's Mac"
