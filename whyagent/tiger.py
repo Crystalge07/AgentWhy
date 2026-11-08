@@ -5,9 +5,11 @@ A no-op when TIGER_DATABASE_URL is unset or unreachable, so tests and offline ru
 from __future__ import annotations
 
 import os
+import platform
 import sys
 import threading
 import uuid
+from pathlib import Path
 
 
 ANALYSES_DDL = """CREATE TABLE IF NOT EXISTS analyses (
@@ -22,6 +24,23 @@ ANALYSES_DDL = """CREATE TABLE IF NOT EXISTS analyses (
 BLIND_DDL = "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER"
 
 
+# Where an analysis ran, so the Vultr page can compare the same bug on a laptop vs. the VM.
+HOST_DDL = ("ALTER TABLE analyses ADD COLUMN IF NOT EXISTS host TEXT, ADD COLUMN IF NOT EXISTS cpus INTEGER,"
+            " ADD COLUMN IF NOT EXISTS workers INTEGER, ADD COLUMN IF NOT EXISTS finished TIMESTAMPTZ")
+
+
+def host_label(vendor_file: str = "/sys/class/dmi/id/sys_vendor") -> str:
+    """'Vultr VM' on a Vultr instance (its DMI vendor says so), else the kind of machine. WHYAGENT_HOST overrides."""
+    if os.environ.get("WHYAGENT_HOST"):
+        return os.environ["WHYAGENT_HOST"]
+    try:
+        if Path(vendor_file).read_text(encoding="utf-8", errors="replace").strip().lower().startswith("vultr"):
+            return "Vultr VM"
+    except OSError:
+        pass
+    return {"Windows": "Laptop (Windows)", "Darwin": "Laptop (Mac)"}.get(platform.system(), f"{platform.system()} machine")
+
+
 def connect(url: str | None = None, timeout: int = 10):
     import psycopg
     url = url if url is not None else os.environ.get("TIGER_DATABASE_URL")
@@ -32,7 +51,7 @@ def connect(url: str | None = None, timeout: int = 10):
 
 class RunLog:
     def __init__(self, analysis_id: str | None = None, pruned: bool = False, url: str | None = None,
-                 label: str = ""):
+                 label: str = "", workers: int | None = None):
         self.analysis_id = analysis_id or uuid.uuid4().hex[:12]
         self.pruned = pruned
         self.label = label
@@ -43,8 +62,10 @@ class RunLog:
             try:
                 self._conn = connect(url)
                 self._conn.execute(ANALYSES_DDL)
-                self._conn.execute("INSERT INTO analyses (analysis_id, label, pruned) VALUES (%s, %s, %s)"
-                                   " ON CONFLICT (analysis_id) DO NOTHING", (self.analysis_id, label, pruned))
+                self._conn.execute(HOST_DDL)
+                self._conn.execute("INSERT INTO analyses (analysis_id, label, pruned, host, cpus, workers)"
+                                   " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id) DO NOTHING",
+                                   (self.analysis_id, label, pruned, host_label(), os.cpu_count(), workers))
             except Exception as e:  # never let logging break an analysis
                 print(f"tiger: logging disabled ({type(e).__name__}: {e})", file=sys.stderr)
                 self._conn = None
@@ -76,5 +97,11 @@ class RunLog:
 
     def close(self):
         if self._conn is not None:
+            try:  # wall-clock end of the analysis, for the speed comparison
+                with self._lock:
+                    self._conn.execute("UPDATE analyses SET finished = now() WHERE analysis_id = %s AND finished IS NULL",
+                                       (self.analysis_id,))
+            except Exception:  # noqa: BLE001
+                pass
             self._conn.close()
             self._conn = None

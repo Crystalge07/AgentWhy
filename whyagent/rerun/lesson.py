@@ -13,6 +13,7 @@ from typing import Callable
 from ..types import RootCause, Step
 
 DEFAULT_MODEL = "gemini-flash-latest"
+GEMINI_TIMEOUT_MS = 60_000
 
 PROMPT = """A coding agent made an edit that broke a test. We proved it by experiment: the test passes
 right before this edit, fails right after it, and passes again when only this edit is reverted.
@@ -73,7 +74,8 @@ def gemini_generate(prompt: str, model: str | None = None) -> str:
 
     # reads GEMINI_API_KEY. Pin v1beta: with newer (AQ.) keys the SDK defaults to v1, where the
     # "-latest" model aliases don't exist (404 NOT_FOUND).
-    client = genai.Client(http_options=types.HttpOptions(api_version="v1beta"))
+    # A timeout too: without one a stalled request hangs the whole analysis instead of falling back to Claude.
+    client = genai.Client(http_options=types.HttpOptions(api_version="v1beta", timeout=GEMINI_TIMEOUT_MS))
     model = model or os.environ.get("WHYAGENT_LESSON_MODEL", DEFAULT_MODEL)
     for attempt in range(4):  # 5xx (overloaded) is usually gone in seconds; 4xx (quota, auth) isn't
         try:

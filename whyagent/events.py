@@ -4,7 +4,11 @@ An analysis turns them on with `start(dir)`; every other module just calls `emit
 when nothing is listening. The server tails the file, so a run started from the terminal shows up live too.
 
 Event types: meta (once, at start), line (a line the CLI printed), state_start / state_done (a code state
-being tested), rerun_done, result (a stage's result landed in the report), done (exit code).
+being tested), rerun_done, result (a stage's result landed in the report), done (exit code). For the pipeline
+view (/live): stage (a pipeline stage started, finished, was skipped or failed), commits (the commit search
+range), steps (the session's edits as cards), lookup (Stage 7's lesson lookup), error.
+
+`load_replay` reads a saved events.jsonl back with the pauses a replay should use.
 """
 from __future__ import annotations
 
@@ -38,6 +42,39 @@ def emit(type_: str, **data) -> None:
             _file.flush()
         except (OSError, ValueError):  # never let progress reporting break an analysis
             pass
+
+
+def stage(name: str, status: str = "start", **data) -> None:
+    """status: start | done | skip | error. The pipeline view lights the node up on start and colours it after."""
+    emit("stage", name=name, status=status, **data)
+
+
+# Replay pacing: real gaps between events, but never longer than MAX_GAP (a 40 s Docker build shouldn't stall the
+# demo), and a beat after each result so a viewer can follow it. Both scale with the viewer's speed control.
+MAX_GAP = 3.0
+RESULT_PAUSE = 0.8
+_RESULTS = {"state_done", "rerun_done", "result", "stage", "steps", "commits", "lookup"}
+
+
+def load_replay(path: Path, max_gap: float = MAX_GAP, pause: float = RESULT_PAUSE) -> list[dict]:
+    """Events of a saved run, each with `delay`: seconds to wait before showing it, at 1x speed. Bad lines are
+    skipped (a run killed mid-write leaves half a line)."""
+    out: list[dict] = []
+    prev_t, prev_type = None, None
+    for ln in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            ev = json.loads(ln)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or "type" not in ev:
+            continue
+        t = ev.get("t") if isinstance(ev.get("t"), (int, float)) else prev_t
+        gap = 0.0 if prev_t is None or t is None else min(max(t - prev_t, 0.0), max_gap)
+        if prev_type in _RESULTS:
+            gap = max(gap, pause)
+        out.append({**ev, "delay": round(gap, 2)})
+        prev_t, prev_type = t if t is not None else prev_t, ev["type"]
+    return out
 
 
 def active() -> bool:

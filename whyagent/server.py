@@ -2,6 +2,10 @@
 
   /             every analysis in .whyagent/history (and older .whyagent/<name>/report.json folders), newest first
   /a/<id>       its report once finished; while it runs, a live view fed by its events.jsonl (see events.py)
+  /live[/<id>]  the pipeline view: one analysis drawn stage by stage (the newest one without an id).
+                Live from /api/stream/<id> (Server-Sent Events), or ?replay=1 from /api/replay/<id>: same page,
+                only the event source differs, and it says which one it is showing.
+  /tiger, /vultr  how we use Tiger Data and Vultr, from live Tiger queries (dashboards.py)
   /api/...      the list, events since a byte offset, and POST to start a new analysis
 
 An analysis started from the terminal writes the same history folder, so it shows up here live as well.
@@ -171,6 +175,46 @@ def _spawn(results: Results, body: dict) -> str:
     return aid
 
 
+def stream(results: Results, aid: str, write, poll: float = 0.25, idle_s: float = STALE_S) -> None:
+    """Server-Sent Events for one analysis: every event so far, then new ones as the run writes them, until its
+    `done` event (or nothing new for idle_s). `write` sends bytes and raises OSError when the browser leaves."""
+    offset, last = 0, time.time()
+    while True:
+        out = results.events(aid, offset)
+        offset = out["next"]
+        for ev in out["events"]:
+            write(f"data: {json.dumps(ev)}\n\n".encode("utf-8"))
+            last = time.time()
+            if ev.get("type") == "done":
+                return
+        if out["status"] in ("missing", "stopped", "done") and not out["events"]:
+            write(f"event: end\ndata: {json.dumps({'status': out['status']})}\n\n".encode("utf-8"))
+            return
+        if time.time() - last > idle_s:
+            return
+        write(b": keep-alive\n\n")
+        time.sleep(poll)
+
+
+def _dashboard(name: str) -> dict:
+    """/api/tiger and /api/vultr: live Tiger queries, or {"error": ...} the page shows."""
+    import importlib
+
+    from . import dashboards, tiger
+    importlib.reload(dashboards)  # like the pages: an edit shows on reload, no server restart mid-demo
+    try:
+        conn = tiger.connect()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Couldn't connect to Tiger Data ({type(e).__name__})."}
+    if conn is None:
+        return {"error": "TIGER_DATABASE_URL isn't set, so there's nothing to show."}
+    try:
+        with conn:
+            return json.loads(json.dumps(getattr(dashboards, name)(conn), default=str))
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Tiger query failed: {type(e).__name__}: {str(e)[:200]}"}
+
+
 def _back_link(html: str) -> str:
     """The saved report, with a way back to the list."""
     return html.replace('<div class="logo">whyagent <span>report</span></div>',
@@ -205,6 +249,33 @@ def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
                 return self.send(200, app)
             if parts == ["api", "analyses"]:
                 return self.json(results.list())
+            if parts in (["tiger"], ["vultr"]):
+                return self.send(200, resources.files("whyagent").joinpath(parts[0] + ".html").read_text(encoding="utf-8"))
+            if parts in (["api", "tiger"], ["api", "vultr"]):
+                return self.json(_dashboard(parts[1]))
+            if parts[0] == "live" and len(parts) <= 2:
+                # read per request: a tweak to the page shows on reload, no server restart mid-demo
+                return self.send(200, resources.files("whyagent").joinpath("pipeline_view.html").read_text(encoding="utf-8"))
+            if len(parts) == 3 and parts[:2] == ["api", "stream"]:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+
+                def write(b: bytes):
+                    self.wfile.write(b)
+                    self.wfile.flush()
+                try:
+                    stream(results, parts[2], write)
+                except OSError:  # the browser closed the page
+                    pass
+                return
+            if len(parts) == 3 and parts[:2] == ["api", "replay"]:
+                d = results.folder(parts[2])
+                if d is None or not (d / "events.jsonl").exists():
+                    return self.json({"error": "no saved events for this analysis"}, 404)
+                from .events import load_replay
+                return self.json({"id": d.name, "events": load_replay(d / "events.jsonl")})
             if len(parts) == 3 and parts[:2] == ["api", "events"]:
                 off = int((parse_qs(u.query).get("from") or ["0"])[0] or 0)
                 return self.json(results.events(parts[2], off))

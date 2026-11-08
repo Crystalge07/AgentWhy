@@ -232,3 +232,44 @@ What's canned and what's real, so we can say it on stage:
   pass/fail evidence and diffs, the `AGENTS.md` write and duplicate check, and the before/after.
 - The 2b session was steered ("don't add constructor arguments, change the defaults in config.py"), and the
   rerun prompt is that same instruction. A real agent would get a rule that contradicts its task; disclose this.
+
+## Pipeline view (for judges)
+
+`whyagent --serve` also serves **`/live`**: an n8n-style workflow canvas that draws one analysis as it runs, in
+plain words (no hashes, commands or ids). Each stage is a node that lights up, works, and gets a check mark;
+whenever a stage runs tests, a branch of sandbox nodes (one per `--workers`) fans out under it and each shows
+what it's testing and the result. The panel below the canvas explains the current stage: the agent's edits as
+cards, the blame hint's "not the cause" moment, the search narrowing, the lesson, the reruns.
+
+```sh
+cd payments-api-client && whyagent --serve     # terminal 1: http://127.0.0.1:8700/live
+git checkout scenario-2b-clean                   # terminal 2: start the run; /live jumps to it
+whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
+```
+
+- `/live/<id>` follows a run as it happens (Server-Sent Events from its `events.jsonl`).
+- `/live/<id>?replay=1` plays a finished run back from its saved events (gaps capped at 3 s, a beat after each
+  result; Play/Continue, Pause and Restart, Space and R keys; it waits for Play, or add `&play` to start at once). Fallback for bad Wi-Fi, a down VM or no model quota.
+  If you show a replay to judges, say it's a recorded run.
+- On the Vultr VM the server listens on 127.0.0.1 only: run `whyagent --serve` there and tunnel it with
+  `ssh -L 8700:127.0.0.1:8700 root@<vm-ip>`, then open http://127.0.0.1:8700/live on the laptop.
+- Events come from `events.stage()` / `events.emit()` calls in the pipeline (no log scraping); they're a
+  no-op unless an analysis turned them on, so library use and tests are unaffected.
+
+## Tiger Data and Vultr pages (for the sponsor tracks)
+
+`whyagent --serve` also serves two pages, both queried live from Tiger Data (`whyagent/dashboards.py`):
+
+- **`/tiger`**: what we store and how. Totals (analyses, test runs, agent reruns, runs reused from the cache,
+  hours of testing, validated lessons), test runs per 30 minutes by result (`time_bucket` on the `runs`
+  hypertable), runs per pipeline step, the validated lessons with their without/with evidence and p-values,
+  the schema (hypertable, continuous aggregate with a refresh policy, JSONB lessons), and every query's SQL
+  and run time. Unit-test rows (labels starting `repo:`) are left out.
+- **`/vultr`**: the same bug analyzed on a laptop and on the Vultr VM (time to the proven cause, test runs,
+  seconds per test run), and how it's deployed (commit → auto-sync hook → VM → parallel Docker sandboxes →
+  Tiger). Each analysis records its host in `analyses.host` (the VM is detected from its DMI vendor;
+  `WHYAGENT_HOST` overrides), with `cpus`, `workers` and `finished`.
+
+To add a comparison point, run the same analysis on both machines with the same `--workers` and
+`--no-rerun` (test runs only, no model tokens). Deterministic bugs (scenario 1, 2b) compare cleanly; the
+flaky one (scenario 3) can take different paths per run, so compare its seconds per test run instead.

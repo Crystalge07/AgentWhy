@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  /* A workflow canvas in the style of n8n: dotted dark canvas, rounded node tiles with icons, labels under them,
+     curved connections that light up as work flows through. Sized for a projector. */
+  :root {
+    --canvas: #1e1e22; --dot: #34343b; --node: #2c2c33; --node-2: #36363f; --edge: #4b4b55;
+    --ink: #f4f4f6; --ink-2: #c9c9d1; --muted: #8e8e99; --faint: #5d5d68;
+    --brand: #ff6d5a; --run: #ff9b3d; --pass: #3ecf8e; --fail: #ff5a6a; --other: #a78bfa; --blame: #f5b83d; --info: #5aa9ff;
+    --panel: #26262c; --panel-line: #393941;
+    --sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { background: var(--canvas); color: var(--ink); font: 18px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+  .hidden { display: none !important; }
+  button { font: inherit; color: inherit; }
+
+  /* ------------------------------------------------ top bar */
+  .top { position: absolute; inset: 0 0 auto 0; height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 28px;
+         background: linear-gradient(#1a1a1ef2, #1a1a1e00); z-index: 20; }
+  .logo { font-weight: 800; font-size: 21px; letter-spacing: -0.03em; }
+  .logo i { font-style: normal; color: var(--brand); }
+  .title { font-size: 18px; color: var(--ink-2); }
+  .title b { color: var(--ink); font-weight: 600; }
+  .top .sp { flex: 1; }
+  .links { display: flex; gap: 4px; } .links a { color: var(--muted); text-decoration: none; font-weight: 600; font-size: 15px; padding: 6px 10px; border-radius: 8px; } .links a:hover { color: var(--ink); background: var(--node); }
+  .ctl { display: flex; gap: 4px; background: var(--node); border: 1px solid var(--edge); border-radius: 10px; padding: 4px; }
+  .ctl button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
+  .ctl button.on { background: var(--brand); color: #fff; }
+  .ctl button:hover { color: var(--ink); }
+
+  /* ------------------------------------------------ canvas */
+  #view { position: absolute; inset: 0 0 var(--panel-h, 30vh) 0; overflow: hidden;
+          background-color: var(--canvas); background-image: radial-gradient(var(--dot) 1.4px, transparent 1.4px); background-size: 24px 24px; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: transform 1s cubic-bezier(.4,0,.2,1); }
+  svg#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  .e { fill: none; stroke: var(--edge); stroke-width: 2.5; transition: stroke .5s, opacity .5s; }
+  .e.done { stroke: var(--pass); }
+  .e.flow { stroke: var(--run); stroke-dasharray: 9 9; animation: flow .6s linear infinite; }
+  .e.res-pass { stroke: var(--pass); } .e.res-fail { stroke: var(--fail); } .e.res-other { stroke: var(--other); }
+  .e.faint { opacity: .25; }
+  @keyframes flow { to { stroke-dashoffset: -18; } }
+  .arrow { fill: var(--edge); transition: fill .5s; }
+  .arrow.done { fill: var(--pass); } .arrow.flow { fill: var(--run); }
+  .elabel { position: absolute; transform: translate(-50%, -100%); font-size: 13px; color: var(--ink-2); background: var(--canvas);
+            padding: 1px 8px; border-radius: 6px; white-space: nowrap; opacity: 0; transition: opacity .5s; pointer-events: none; }
+  .elabel.show { opacity: 1; }
+
+  .node { position: absolute; width: 112px; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; transition: opacity .5s; }
+  .tilebox { position: relative; width: 112px; height: 112px; }
+  .tile { position: absolute; inset: 0; background: var(--node); border: 2px solid var(--edge); border-radius: 14px; display: grid; place-items: center;
+          transition: border-color .4s, box-shadow .4s, background .4s; z-index: 1; }
+  .node.trigger .tile { border-radius: 56px 14px 14px 56px; }
+  .tile svg { width: 50px; height: 50px; stroke: var(--ink-2); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: stroke .4s; }
+  .node.idle { opacity: .45; }
+  .node.skip { opacity: .3; }
+  .node.skip .tile { border-style: dashed; }
+  .node.active .tile { border-color: transparent; box-shadow: 0 0 0 8px #ff9b3d22, 0 10px 40px #0008; background: var(--node-2); }
+  .node.active .tile svg { stroke: var(--ink); }
+  .node.active .tilebox::before { content: ""; position: absolute; inset: -4px; border-radius: 17px; z-index: 0;
+          background: conic-gradient(from var(--a, 0deg), var(--run), #ff6d5a00 40%, var(--run) 50%, #ff6d5a00 90%, var(--run)); animation: spin 1.6s linear infinite; }
+  .node.trigger.active .tilebox::before { border-radius: 60px 17px 17px 60px; }
+  @property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  @keyframes spin { to { --a: 360deg; } }
+  .node.done .tile { border-color: var(--pass); }
+  .node.done .tile svg { stroke: var(--ink); }
+  .node.error .tile { border-color: var(--fail); box-shadow: 0 0 0 8px #ff5a6a22; }
+  .badge { position: absolute; right: -10px; bottom: -10px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+           font-size: 17px; font-weight: 800; z-index: 2; transform: scale(0); transition: transform .35s cubic-bezier(.3,1.6,.5,1); border: 3px solid var(--canvas); }
+  .node.done .badge { transform: scale(1); background: var(--pass); color: #0f2a1d; }
+  .node.error .badge { transform: scale(1); background: var(--fail); color: #2a0f12; }
+  .port { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--edge); border: 2px solid var(--canvas); z-index: 2; }
+  .port.in { left: -7px; } .port.out { right: -7px; }
+  .node.trigger .port.in { display: none; }
+  .lab { margin-top: 12px; font-weight: 700; font-size: 17px; text-align: center; line-height: 1.2; width: 190px; }
+  .sub { margin-top: 4px; font-size: 14px; color: var(--muted); text-align: center; width: 210px; line-height: 1.3; min-height: 1.3em; }
+  .node.active .sub { color: var(--run); }
+  .node.done .sub { color: var(--ink-2); }
+  .node.error .sub { color: var(--fail); }
+
+  /* sandboxes: the parallel worker branch */
+  .sbx { position: absolute; width: 150px; transform: translate(-50%, -50%); transition: left .9s cubic-bezier(.4,0,.2,1), top .9s cubic-bezier(.4,0,.2,1), opacity .5s; }
+  .sbx .box { background: var(--node); border: 2px solid var(--edge); border-radius: 12px; padding: 10px 12px; transition: border-color .3s, background .3s; position: relative; }
+  .sbx .h { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .sbx .h svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+  .sbx .what { font-size: 15px; font-weight: 600; margin-top: 4px; min-height: 2.6em; line-height: 1.3; color: var(--ink); }
+  .sbx .res { font-size: 15px; font-weight: 700; margin-top: 2px; min-height: 1.4em; }
+  .sbx.idle { opacity: .5; } .sbx.idle .what { color: var(--faint); }
+  .sbx.run .box { border-color: var(--run); } .sbx.run .res { color: var(--run); }
+  .sbx.run .res::after { content: ""; display: inline-block; width: 12px; height: 12px; margin-left: 8px; border: 2px solid var(--run); border-right-color: transparent; border-radius: 50%; animation: spin2 .8s linear infinite; vertical-align: -1px; }
+  @keyframes spin2 { to { transform: rotate(360deg); } }
+  .sbx.pass .box { border-color: var(--pass); background: #22352d; } .sbx.pass .res { color: var(--pass); }
+  .sbx.fail .box { border-color: var(--fail); background: #3a2428; } .sbx.fail .res { color: var(--fail); }
+  .sbx.other .box { border-color: var(--other); background: #2d2840; } .sbx.other .res { color: var(--other); }
+  .pooltag { position: absolute; transform: translate(-50%, 0); font-size: 14px; color: var(--muted); white-space: nowrap; transition: left .9s cubic-bezier(.4,0,.2,1), top .9s, opacity .5s; }
+
+  /* ------------------------------------------------ output panel (n8n's node detail view) */
+  #panel { position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 30vh); background: var(--panel); border-top: 1px solid var(--panel-line);
+           display: flex; flex-direction: column; z-index: 10; box-shadow: 0 -20px 50px #0006; }
+  .ph { display: flex; align-items: baseline; gap: 14px; padding: 10px 28px; border-bottom: 1px solid var(--panel-line); }
+  .ph .ic { width: 40px; height: 40px; border-radius: 9px; background: var(--node-2); display: grid; place-items: center; }
+  .ph .ic svg { width: 24px; height: 24px; stroke: var(--ink); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .ph h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .ph .step { font-size: 14px; color: var(--muted); }
+  .ph .tab { margin-left: auto; font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; border-bottom: 2px solid var(--brand); padding-bottom: 2px; }
+  .pb { flex: 1; overflow: auto; padding: 12px 28px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .say { font-size: 20px; line-height: 1.4; max-width: 1100px; }
+  .say b { color: #fff; font-weight: 700; }
+  .say .hl { color: var(--run); }
+  .say .ok { color: var(--pass); font-weight: 700; } .say .bad { color: var(--fail); font-weight: 700; } .say .odd { color: var(--other); font-weight: 700; }
+  .quote { font-size: 17px; color: var(--ink-2); border-left: 4px solid var(--brand); padding: 4px 0 4px 16px; max-width: 1100px; }
+  .quote small { display: block; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+  .enter { opacity: 0; transform: translateY(10px); }
+  .say, .quote, .card, .chk, .dotc, .agent { transition: opacity .45s, transform .45s, border-color .4s, background .4s, color .4s; }
+
+  /* the agent's changes as cards */
+  .cards { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; padding: 10px 0 12px; }
+  .card { width: 180px; background: var(--node); border: 2px solid var(--edge); border-radius: 12px; padding: 10px 12px 12px; position: relative; }
+  .card .n { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .card .f { font-size: 14px; color: var(--ink-2); margin-top: 2px; }
+  .card .c { font: 600 13px/1.3 var(--mono); color: var(--ink); margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .card .tag { position: absolute; top: -13px; left: 10px; font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 6px; letter-spacing: .04em; text-transform: uppercase; }
+  .card .tag:empty { display: none; }
+  .card.applied { border-color: var(--info); background: #233044; }
+  .card.applied .tag { background: var(--info); color: #08182c; }
+  .card.out { opacity: .28; transform: scale(.94); }
+  .card.aside { opacity: .22; transform: scale(.9); border-style: dashed; }
+  .card.suspect { border-color: var(--blame); background: #3a3220; } .card.suspect .tag { background: var(--blame); color: #2b1f05; }
+  .card.cleared { border-color: var(--edge); } .card.cleared .tag { background: var(--node-2); color: var(--ink-2); text-decoration: line-through; }
+  .card.undone { transform: translateY(18px) rotate(-2.5deg); border-style: dashed; opacity: .7; }
+  .card.culprit { border-color: var(--fail); background: #3a2428; box-shadow: 0 0 0 5px #ff5a6a26; } .card.culprit .tag { background: var(--fail); color: #2a0f12; }
+  .card.culprit.undone { opacity: 1; }
+
+  .checks { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chk { display: inline-flex; align-items: center; gap: 10px; background: var(--node); border: 2px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 16px; }
+  .chk .r { font-weight: 800; }
+  .chk.pass { border-color: var(--pass); } .chk.pass .r { color: var(--pass); }
+  .chk.fail { border-color: var(--fail); } .chk.fail .r { color: var(--fail); }
+  .chk.other { border-color: var(--other); } .chk.other .r { color: var(--other); }
+  .chk.run { border-color: var(--run); } .chk.run .r { color: var(--run); }
+
+  .commits { display: flex; align-items: flex-start; }
+  .dotc { width: 150px; display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; text-align: center; }
+  .dotc::after { content: ""; position: absolute; top: 15px; left: 50%; width: 100%; height: 3px; background: var(--edge); }
+  .dotc:last-child::after { display: none; }
+  .dotc .d { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--edge); background: var(--canvas); z-index: 1; transition: all .4s; }
+  .dotc .t { font-size: 14px; color: var(--ink-2); line-height: 1.25; padding: 0 6px; }
+  .dotc.pass .d { background: var(--pass); border-color: var(--pass); } .dotc.fail .d { background: var(--fail); border-color: var(--fail); }
+  .dotc.other .d { background: var(--other); border-color: var(--other); }
+  .dotc.probe .d { border-color: var(--run); box-shadow: 0 0 0 7px #ff9b3d33; }
+  .dotc.out { opacity: .3; }
+  .dotc.culprit .d { transform: scale(1.3); box-shadow: 0 0 0 7px #ff5a6a33; }
+
+  .lesson { font-size: 22px; font-weight: 700; line-height: 1.35; max-width: 1150px; }
+  .lesson::before { content: "“"; color: var(--brand); }
+  .lesson::after { content: "”"; color: var(--brand); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; padding: 4px 12px; border-radius: 99px; background: var(--node-2); color: var(--ink-2); }
+  .arms { display: flex; flex-direction: column; gap: 12px; }
+  .arm { display: flex; align-items: center; gap: 12px; }
+  .arm .l { width: 190px; font-weight: 700; font-size: 18px; }
+  .agent { width: 46px; height: 46px; border-radius: 12px; background: var(--node); border: 2px dashed var(--edge); display: grid; place-items: center; font-size: 24px; font-weight: 800; color: var(--faint); }
+  .agent.run { border: 2px solid var(--run); color: var(--run); }
+  .agent.pass { border: 2px solid var(--pass); background: #22352d; color: var(--pass); }
+  .agent.fail { border: 2px solid var(--fail); background: #3a2428; color: var(--fail); }
+  .agent.other { border: 2px solid var(--other); background: #2d2840; color: var(--other); }
+  .big { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+  .big.ok { color: var(--pass); } .big.bad { color: var(--fail); } .big.mid { color: var(--blame); } .big.info { color: var(--info); }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; }
+  .stat { background: var(--node); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 18px; min-width: 200px; }
+  .stat .k { font-size: 14px; color: var(--muted); }
+  .stat .v { font-size: 24px; font-weight: 800; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--brand); color: #fff; border: 0; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 16px; text-decoration: none; width: fit-content; }
+
+  .pick { position: absolute; inset: 64px 0 0 0; overflow: auto; padding: 40px; z-index: 30; background: var(--canvas); }
+  .pick h1 { font-size: 30px; margin: 0 0 6px; }
+  .pick p { color: var(--muted); margin: 0 0 20px; }
+  .pick a.row { display: flex; gap: 20px; align-items: center; background: var(--node); border: 1px solid var(--edge); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; text-decoration: none; color: inherit; max-width: 900px; }
+  .pick a.row:hover { border-color: var(--brand); }
+  .pick .row b { flex: 1; }
+  .pick .row span { color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="logo">why<i>agent</i></span>
+  <span class="title" id="title"></span>
+  <span class="sp"></span>
+  <nav class="links"><a href="/tiger">Tiger Data</a><a href="/vultr">Vultr</a></nav>
+  <span class="ctl hidden" id="ctl">
+    <button id="pause" class="on" title="Space">Play</button>
+    <button id="next" title="N or →">Next step</button>
+    <button id="restart" title="R">Restart</button>
+  </span>
+</header>
+<div id="view"><div id="world"><svg id="edges"></svg></div></div>
+<section id="panel">
+  <div class="ph"><div><h2 id="pname">Waiting for a run</h2><div class="step" id="pstep"></div></div><span class="tab">Output</span></div>
+  <div class="pb" id="pb"></div>
+</section>
+<section class="pick hidden" id="pick"></section>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ------------------------------------------------------------------ icons (stroke paths, lucide-style)
+const I = {
+  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/>',
+  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  commit: '<circle cx="12" cy="12" r="3.5"/><path d="M3 12h5.5M15.5 12H21"/>',
+  entire: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 8h6M9 12h5M9 16h6M9 8v8"/>',
+  film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  blame: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/><path d="M11 8v3.5M11 14.2v.1"/>',
+  filter: '<path d="M3 4h18l-7 8.5V19l-4 2v-8.5L3 4z"/>',
+  split: '<path d="M4 12h5"/><path d="M9 12c3 0 3-6 6-6h5"/><path d="M9 12c3 0 3 6 6 6h5"/><path d="M15 12h5"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+  bulb: '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/>',
+  flask: '<path d="M9 3h6M10 3v6L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7 15h10"/>',
+  flag: '<path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/>',
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+};
+const icon = k => `<svg viewBox="0 0 24 24">${I[k]}</svg>`;
+
+// The workflow, left to right. Plain words: the audience doesn't need to know the code.
+const NODES = [
+  { k: "failed",     i: "bolt",   t: "A test failed", trigger: true },
+  { k: "precheck",   i: "repeat", t: "Reproduce it" },
+  { k: "commit",     i: "commit", t: "Find the commit" },
+  { k: "entire",     i: "entire", t: "Entire: open the session" },
+  { k: "session",    i: "film",   t: "Rebuild the agent's work" },
+  { k: "blame_hint", i: "blame",  t: "Check git blame" },
+  { k: "prune",      i: "filter", t: "Set aside unrelated edits" },
+  { k: "bisect",     i: "split",  t: "Search the edits" },
+  { k: "confirm",    i: "shield", t: "Prove it" },
+  { k: "lesson",     i: "bulb",   t: "Write a lesson" },
+  { k: "rerun",      i: "flask",  t: "Test the lesson" },
+  { k: "result",     i: "flag",   t: "Answer" },
+];
+const GAP = 250, NODE_Y = 0, POOL_Y = 300;
+const POS = Object.fromEntries(NODES.map((n, i) => [n.k, i * GAP]));
+const STAGE_NODE = { precheck: "precheck", commit: "commit", blame_hint: "blame_hint", prune: "prune", bisect: "bisect", confirm: "confirm", ddmin: "confirm" };
+const OUT = { PASS: "pass", TARGET_FAIL: "fail", OTHER: "other", REGRESSED: "fail", FAIL: "fail" };
+const WORD = { PASS: "Passes", TARGET_FAIL: "Fails", OTHER: "Breaks differently", REGRESSED: "Broke other tests", FAIL: "Fails" };
+
+// ------------------------------------------------------------------ state (one reducer for both event sources)
+let S;
+function fresh() {
+  const nodes = {};
+  NODES.forEach(n => nodes[n.k] = { status: "idle", sub: "" });
+  return { nodes, meta: null, t0: null, failure: null, commits: null, blameCommit: null, commitTests: {}, steps: [], order: [],
+           blame: null, prune: null, bisect: null, confirm: null, rc: null, tests: {}, lookup: null, lesson: null, fallback: false,
+           rerun: null, done: null, error: null, runs: 0, slots: [], focus: null, panelFor: "failed", edgeLab: {} };
+}
+const vote = outs => outs.includes("TARGET_FAIL") ? "TARGET_FAIL" : outs.length && outs.every(o => o === "PASS") ? "PASS" : "OTHER";
+const setNode = (k, status, sub) => { const n = S.nodes[k]; if (!n) return; if (status) n.status = status; if (sub !== undefined) n.sub = sub; };
+const activeNode = () => NODES.map(n => n.k).filter(k => S.nodes[k].status === "active").pop();
+const workers = () => Math.max(1, Math.min(8, (S.meta && S.meta.workers) || 2));
+const disp = id => { const i = S.order.indexOf(id); return i < 0 ? "?" : i + 1; };  // edits numbered 1..N for people
+const short = sha => (S.commits && S.commits.commits || []).find(c => c.sha === sha);
+
+function humanTest(cmd) {
+  const w = (cmd || "").split(/\s+/).find(x => x.includes("::")) || (cmd || "").split(/\s+/).pop() || "";
+  const name = w.split("::").pop().replace(/^test_?/, "").replace(/[_-]+/g, " ").replace(/\.py$/, "").trim();
+  return name || "the test";
+}
+function humanError(e) {
+  if (!e) return "";
+  const first = String(e).split(/;\s/)[0];
+  const parts = first.split(/:\s+/);
+  return (parts.length > 1 ? parts[parts.length - 1] : first).trim();
+}
+function editsLabel(ids, order) {
+  if (!ids) return "";
+  if (!ids.length) return "Before the agent";
+  const ns = ids.map(disp).sort((a, b) => a - b);
+  const all = order.map(disp);
+  if (ns.length === all.length && ns.every((x, i) => x === all[i])) return "All the agent's edits";
+  if (ns.every((x, i) => x === all[i])) return ns.length === 1 ? "Edit 1 only" : `Edits 1–${ns[ns.length - 1]}`;
+  const miss = all.filter(x => !ns.includes(x));
+  if (miss.length <= 2) return `Everything except edit ${miss.join(" & ")}`;
+  return `Edits ${ns.join(", ")}`;
+}
+function versionLabel(t, node) {
+  const m = S.meta || {};
+  if (node === "precheck" || node === "commit") {
+    if (m.head && t.base === m.head.slice(0, 7)) return node === "precheck" ? "The code now" : "Today's code";
+    if (m.good && t.base === m.good.slice(0, 7)) return "Before the agent";
+    if (S.blameCommit && t.base === S.blameCommit.commit) return "With the agent's commit";
+    const c = short(t.base);
+    return c ? `“${c.subject.slice(0, 34)}”` : "Just before the agent's commit";
+  }
+  return editsLabel(t.ids, node === "bisect" && S.bisect ? S.bisect.kept : S.order);
+}
+
+function apply(ev) {
+  switch (ev.type) {
+    case "meta": S.meta = ev; S.t0 = ev.t; setNode("failed", "active", "Reading the failure"); S.panelFor = "failed"; break;
+    case "line": if (/→ writing it with Claude/.test(ev.text)) S.fallback = true; break;
+    case "error": S.error = ev.text; { const a = activeNode(); if (a) setNode(a, "error", "Stopped by an error"); } break;
+    case "failure": S.failure = ev; break;
+    case "stage": onStage(ev); break;
+    case "commits": S.commits = ev; break;
+    case "blame_commit": S.blameCommit = ev; break;
+    case "steps": S.steps = ev.steps; S.order = ev.order; S.prompt = ev.prompt; S.agent = ev.agent; break;
+    case "state_start": {
+      const node = STAGE_NODE[ev.stage]; if (!node) break;
+      (S.tests[node] = S.tests[node] || {})[ev.key] = { ...ev, running: true, seq: Object.keys(S.tests[node]).length };
+      S.focus = { node, ids: ev.ids };
+      take(ev.key, versionLabel(ev, node), node);
+      break;
+    }
+    case "state_done": {
+      const node = STAGE_NODE[ev.stage]; if (!node) break;
+      const tests = S.tests[node] = S.tests[node] || {};
+      const prev = tests[ev.key];
+      const outcome = vote(ev.outcomes || []);
+      tests[ev.key] = { ...(prev || { seq: Object.keys(tests).length }), ...ev, running: false, cached: ev.cached && !prev, outcome };
+      if (!ev.cached) { S.runs += (ev.outcomes || []).length; finish(ev.key, outcome); }
+      break;
+    }
+    case "rerun_start": take("r" + ev.job, ev.arm === "A" ? "Fresh agent, no lesson" : "Fresh agent + lesson", "rerun"); if (S.rerun) S.rerun.running[ev.job] = ev.arm; break;
+    case "rerun_done":
+      if (S.rerun) { (ev.arm === "A" ? S.rerun.a : S.rerun.b).push(ev); delete S.rerun.running[ev.job]; }
+      finish("r" + ev.job, ev.outcome);
+      break;
+    case "lookup": S.lookup = ev; break;
+    case "root_cause": S.rc = ev; break;
+    case "result":
+      if (ev.key === "lesson" && ev.value) S.lesson = ev.value;
+      if (ev.key === "rerun" && S.rerun && ev.value) Object.assign(S.rerun, { verdict: ev.value.verdict, p: ev.value.p });
+      if (ev.key === "root_cause" && !S.rc) S.rc = { step_id: ev.value.step_id, file: ev.value.file };
+      break;
+    case "done": {
+      S.done = ev;
+      const a = activeNode();
+      if (ev.code !== 0 && a && !S.rc) setNode(a, "error", S.nodes[a].sub || "Stopped");
+      NODES.forEach(n => { if (S.nodes[n.k].status === "active") setNode(n.k, "done"); });
+      setNode("result", S.rc ? "done" : "error", S.rc ? `Edit ${disp(S.rc.step_id)} did it` : "No single cause found");
+      S.panelFor = "result";
+      S.slots.forEach(s => s.key && !s.done && (s.done = true));
+      break;
+    }
+  }
+}
+
+// sandbox slots: a free one per test run, so parallel runs show side by side
+function take(key, what, node) {
+  let s = S.slots.find(x => !x.key || x.done);  // reuse a finished sandbox, else open another one
+  if (!s) { s = { key: null }; S.slots.push(s); }
+  Object.assign(s, { key, what, node, done: false, outcome: null, since: Date.now() });
+}
+function finish(key, outcome) {
+  const s = S.slots.find(x => x.key === key);
+  if (s) Object.assign(s, { done: true, outcome });
+}
+
+function onStage(ev) {
+  const k = ev.name, st = ev.status;
+  if (S.nodes.failed.status === "active" && k !== "failed") setNode("failed", "done", S.failure ? "" : "");
+  if (st === "start") {
+    S.panelFor = k;
+    const sub = {
+      precheck: "Before vs. now", commit: "Which commit did it?", entire: "Loading the transcript", session: "Turning it into replayable edits",
+      blame_hint: "Undo its suspect", prune: "Tracing what the test uses", bisect: "Testing in parallel", confirm: "Undo only that edit",
+      lesson: "Checking past lessons", rerun: "Fresh agents, with vs. without",
+    }[k];
+    setNode(k, "active", sub);
+    if (STAGE_NODE[k] || k === "rerun") S.slots = [];
+    if (k === "blame_hint") S.blame = { ...ev };
+    if (k === "bisect") S.bisect = { kept: ev.kept };
+    if (k === "confirm") S.confirm = { ...ev };
+    if (k === "rerun") S.rerun = { agent: ev.agent, runs: ev.runs, a: [], b: [], running: {} };
+  } else if (st === "done") {
+    if (k === "precheck") { setNode(k, "done", ev.mode === "flaky" ? "Fails only sometimes" : "Passed before, fails now"); S.flaky = ev.mode === "flaky" ? ev.runs_per_state : 0; }
+    if (k === "commit") { S.guiltySubject = ev.subject; setNode(k, "done", "The agent's commit"); S.edgeLab.commit = "1 commit"; }
+    if (k === "entire") { setNode(k, "done", `${ev.sessions} agent session${ev.sessions === 1 ? "" : "s"}`); }
+    if (k === "session") { setNode(k, "done", `${ev.edits} edits by the agent`); S.edgeLab.session = `${ev.edits} edits`; }
+    if (k === "blame_hint") { Object.assign(S.blame, ev); setNode(k, "done", ev.is_cause ? "Blame was right" : "Blame was wrong"); }
+    if (k === "prune") { S.prune = ev; setNode(k, "done", ev.pruned.length ? `${ev.pruned.length} set aside` : "Nothing to set aside"); S.edgeLab.prune = `${ev.kept.length} edits left`; }
+    if (k === "bisect") { Object.assign(S.bisect, ev); setNode(k, "done", `Edit ${disp(ev.boundary)} flips it`); S.edgeLab.bisect = `edit ${disp(ev.boundary)}`; }
+    if (k === "confirm") setNode(k, "done", "Proven by a test");
+    if (k === "lesson") setNode(k, "done", { gemini: "Written by Gemini", claude: "Written by Claude", brain: "Found a saved one", given: "Given by hand" }[ev.source] || "");
+    if (k === "rerun") { Object.assign(S.rerun, { verdict: ev.verdict, p: ev.p }); setNode(k, "done", VERDICT[ev.verdict] ? VERDICT[ev.verdict][0] : ev.verdict); }
+  } else if (st === "skip") {
+    setNode(k, "skip", "Not needed");
+    if (k === "bisect" || k === "confirm") S.viaBlame = ev.boundary || ev.root;
+  } else if (st === "error") {
+    if (k === "rerun" && S.rerun) S.rerun.verdict = ev.verdict;
+    setNode(k, "error", "Stopped");
+    S.stopWhy = ev.why;
+  }
+}
+const GOAL_TEXT = "A test in this project broke after an AI coding agent worked on it. <b>Goal:</b> find the exact change that broke it, prove it, and learn from it.";
+const VERDICT = {
+  VALIDATED:    ["The lesson works", "ok", "Agents that read the lesson stop making this mistake. It's saved for next time."],
+  PROMISING:    ["Looks helpful", "mid", "Agents did better with the lesson, but not by enough to be sure yet."],
+  INEFFECTIVE:  ["Didn't help", "bad", "The lesson didn't change what agents do, so it isn't saved."],
+  NOT_NEEDED:   ["Not needed", "info", "Fresh agents already get this right without the lesson, so there's nothing to save."],
+  INCONCLUSIVE: ["Couldn't tell", "bad", "Too few reruns finished to compare."],
+};
+
+// ------------------------------------------------------------------ canvas
+function put(parent, key, cls, html, tag = "div") {  // keyed upsert, so CSS transitions play instead of redraws
+  let el = parent.querySelector(`:scope > [data-k="${CSS.escape(String(key))}"]`);
+  if (!el) {
+    el = document.createElement(tag); el.dataset.k = key; el.className = cls + " enter"; el._c = cls;
+    el.innerHTML = html; el._h = html; parent.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("enter")));
+    return el;
+  }
+  if (el._c !== cls) { el.className = cls; el._c = cls; }
+  if (el._h !== html) { el.innerHTML = html; el._h = html; }
+  return el;
+}
+function keep(parent, key, cls) {
+  let el = parent.querySelector(`:scope > [data-k="${key}"]`);
+  if (!el) { el = document.createElement("div"); el.dataset.k = key; parent.appendChild(el); }
+  if (el.className !== cls) el.className = cls;
+  return el;
+}
+
+function buildCanvas() {
+  const w = $("#world");
+  w.querySelectorAll(".node, .sbx, .elabel, .pooltag").forEach(x => x.remove());
+  NODES.forEach(n => {
+    const el = document.createElement("div");
+    el.className = "node idle" + (n.trigger ? " trigger" : "");
+    el.id = "n-" + n.k;
+    el.style.left = POS[n.k] + "px"; el.style.top = NODE_Y + "px";
+    el.innerHTML = `<div class="tilebox"><div class="tile">${icon(n.i)}</div><span class="port in"></span><span class="port out"></span><span class="badge"></span></div>
+      <div class="lab">${esc(n.t)}</div><div class="sub"></div>`;
+    el.style.transform = "translate(-50%, -56px)";
+    el.onclick = () => { S.panelFor = n.k; S.pinned = true; render(); };
+    w.appendChild(el);
+    const lab = document.createElement("div");
+    lab.className = "elabel"; lab.id = "l-" + n.k;
+    lab.style.left = POS[n.k] + GAP / 2 + "px"; lab.style.top = NODE_Y - 8 + "px";
+    w.appendChild(lab);
+  });
+  const tag = document.createElement("div"); tag.className = "pooltag"; tag.id = "pooltag"; w.appendChild(tag);
+}
+
+function edgePath(x1, y1, x2, y2, down) {
+  if (!down) { const mx = (x1 + x2) / 2; return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`; }
+  return `M${x1},${y1} C${x1},${y1 + 110} ${x2},${y2 - 110} ${x2},${y2}`;
+}
+
+let camX = null;
+function renderCanvas() {
+  const w = $("#world");
+  NODES.forEach((n, i) => {
+    const st = S.nodes[n.k];
+    const el = $("#n-" + n.k);
+    const cls = "node " + st.status + (n.trigger ? " trigger" : "");
+    if (el.className !== cls) el.className = cls;
+    $(".badge", el).textContent = st.status === "done" ? "✓" : st.status === "error" ? "!" : "";
+    const sub = $(".sub", el); if (sub.textContent !== st.sub) sub.textContent = st.sub;
+    const lab = $("#l-" + n.k);
+    const txt = S.edgeLab[n.k] || "";
+    lab.textContent = txt; lab.className = "elabel" + (txt && st.status === "done" ? " show" : "");
+  });
+  // edges between stages
+  let svg = "";
+  NODES.forEach((n, i) => {
+    if (!i) return;
+    const prev = NODES[i - 1].k, a = S.nodes[prev].status, b = S.nodes[n.k].status;
+    const x1 = POS[prev] + 58, x2 = POS[n.k] - 58;
+    const cls = b === "active" ? "flow" : ["done", "error", "skip"].includes(b) || (a === "done" && b !== "idle") ? "done" : "";
+    svg += `<path class="e ${cls}" d="${edgePath(x1, NODE_Y, x2 - 8, NODE_Y)}"/><path class="arrow ${cls}" d="M${x2 - 10},${NODE_Y - 7} L${x2 + 1},${NODE_Y} L${x2 - 10},${NODE_Y + 7}z"/>`;
+  });
+  // the sandbox branch fans out under whichever stage is running tests
+  const anchor = poolAnchor();
+  const n = S.slots.length;
+  const span = 175;
+  const show = !!anchor && n > 0;
+  w.querySelectorAll(".sbx").forEach(el => { if (Number(el.dataset.k.slice(3)) >= n) el.remove(); });
+  for (let i = 0; i < n; i++) {
+    const s = S.slots[i] || {};
+    const x = (anchor ? POS[anchor] : POS[activeNode() || "failed"]) + (i - (n - 1) / 2) * span;
+    const state = !s.key ? "idle" : !s.done ? "run" : OUT[s.outcome] || "other";
+    const el = put(w, "sbx" + i, `sbx ${state}`, `<div class="box"><div class="h">${icon("box")}Sandbox ${i + 1}</div>
+      <div class="what">${esc(s.what || "Idle")}</div><div class="res">${!s.key ? "" : !s.done ? "Running" : esc(WORD[s.outcome] || s.outcome)}</div></div>`);
+    el.style.left = x + "px"; el.style.top = POOL_Y + 50 + "px"; el.style.opacity = show ? 1 : 0;
+    if (show) {
+      const ecls = state === "run" ? "flow" : state === "idle" ? "faint" : "res-" + state;
+      svg += `<path class="e ${ecls}" d="${edgePath(POS[anchor], NODE_Y + 150, x, POOL_Y - 2, true)}"/>`;
+    }
+  }
+  const tag = $("#pooltag");
+  if (show) {
+    tag.style.left = POS[anchor] + "px"; tag.style.top = POOL_Y + 120 + "px"; tag.style.opacity = 1;
+    tag.textContent = n === 1 ? "A sandbox: a clean, isolated copy of the code" : `${n} sandboxes at once · each a clean, isolated copy of the code`;
+  } else tag.style.opacity = 0;
+  $("#edges").innerHTML = svg;
+  // camera: keep the stage that's working in the middle
+  const reached = NODES.map(n => n.k).filter(k => S.nodes[k].status !== "idle").pop() || "failed";
+  const focus = anchor || activeNode() || reached;
+  const v = $("#view"), vw = v.clientWidth, vh = v.clientHeight;
+  let scale = Math.max(.62, Math.min(1, vw / 1500, vh / 560)), x, y;
+  if (S.done) {  // the end: zoom out to the whole workflow
+    const wide = POS.result - POS.failed + 260;
+    scale = Math.min(1, (vw - 80) / wide);
+    x = (vw - (POS.result - POS.failed) * scale) / 2 - POS.failed * scale;
+    y = vh / 2 - 20 * scale;
+  } else {
+    if (anchor) scale = Math.max(.5, Math.min(scale, (vh - 120) / 450));  // room for the sandbox branch
+    x = vw / 2 - POS[focus] * scale;
+    y = anchor ? 110 : Math.max(150, vh / 2 - 40 * scale);
+  }
+  if (camX !== x + "," + y + "," + scale) { camX = x + "," + y + "," + scale; $("#world").style.transform = `translate(${x}px, ${y}px) scale(${scale})`; }
+}
+function poolAnchor() {
+  const a = activeNode();
+  if (a && (STAGE_NODE[a] || a === "rerun")) return a;
+  return null;
+}
+
+// ------------------------------------------------------------------ output panel: what this step is doing, in plain words
+function card(id, cls, tag) {
+  const s = S.steps.find(x => x.id === id) || {};
+  const file = (s.file || "").split("/").pop();
+  return [cls, `<span class="tag">${esc(tag || "")}</span><div class="n">Edit ${disp(id)}</div><div class="f">${esc(file)}</div><div class="c">${esc(s.change || "")}</div>`];
+}
+function cardsRow(pb, key, ids, fn) {
+  const row = keep(pb, key, "cards");
+  ids.forEach(id => { const [cls, tag] = fn(id); const [c, h] = card(id, cls, tag); put(row, id, "card " + c, h); });
+}
+function checks(pb, node, key = "checks") {
+  const row = keep(pb, key, "checks");
+  Object.values(S.tests[node] || {}).sort((a, b) => a.seq - b.seq).forEach(t => {
+    const o = t.running ? "run" : OUT[t.outcome] || "other";
+    put(row, t.key, "chk " + o, `<span>${esc(versionLabel(t, node))}</span><span class="r">${t.running ? "testing…" : esc(WORD[t.outcome] || t.outcome)}${t.cached ? " · already checked" : ""}</span>`);
+  });
+}
+const say = (pb, key, html, cls = "say") => put(pb, key, cls, html);
+
+const PANELS = {
+  failed(pb) {
+    say(pb, "a", `${GOAL_TEXT}`);
+    say(pb, "q", `No guessing: every answer below comes from actually running the test.`);
+  },
+  precheck(pb) {
+    say(pb, "a", "First, make sure the failure is real: run the test on the code <b>before the agent</b> and on the code <b>now</b>, several times each.");
+    checks(pb, "precheck");
+    const d = S.nodes.precheck.status === "done";
+    if (d) say(pb, "b", S.flaky ? `It fails <span class="hl">only some of the time</span>, so from here on every check runs ${S.flaky} times.` :
+      `Before the agent: <span class="ok">passes every time</span>. Now: <span class="bad">fails every time</span>. The agent's work broke it.`);
+  },
+  commit(pb) {
+    const bc = S.blameCommit;
+    if (bc) say(pb, "a", `git blame points at the agent's commit <b>“${esc(bc.subject)}”</b>. Don't trust it yet, test it: the version just before must pass, and this one must fail.`);
+    if (S.commits) {
+      say(pb, "a2", `Search the ${S.commits.commits.length} commits since the code last worked, halving the range each time.`);
+      dots(pb);
+    }
+    checks(pb, "commit");
+    if (S.nodes.commit.status === "done") say(pb, "b", `<span class="ok">Found it:</span> the agent's commit <b>“${esc(S.guiltySubject || "")}”</b>.`);
+  },
+  entire(pb) {
+    say(pb, "a", "Entire recorded the agent's whole session for that commit: every edit, what it was thinking, and what it saw on screen. We load that transcript.");
+    if (S.nodes.entire.status === "done") say(pb, "b", `<span class="ok">Session loaded.</span> Now we know <b>why</b> each line changed, not just who changed it.`);
+    if (S.nodes.entire.status === "skip" || S.nodes.entire.status === "error") say(pb, "c", "No agent session for this commit: a person wrote it.");
+  },
+  session(pb) {
+    if (S.prompt) say(pb, "p", `<small>What the agent was asked to do</small>${esc(S.prompt)}`, "quote");
+    if (S.order.length) {
+      say(pb, "a", `It made <b>${S.order.length} edits</b> to the code. We can replay them one by one, exactly as the agent made them.`);
+      cardsRow(pb, "cards", S.order, () => ["", ""]);
+    }
+  },
+  blame_hint(pb) {
+    const bh = S.blame;
+    if (!bh) { say(pb, "s", "git blame couldn't point at a single edit here, so we go straight to the search."); return; }
+    const settled = bh.is_cause !== undefined;
+    say(pb, "a", `git blame says <b>edit ${disp(bh.suspect)}</b> wrote the line in the error. Most people would stop here. We test it: <b>undo that edit</b> and run the test.`);
+    cardsRow(pb, "cards", S.order, id => {
+      if (id === bh.suspect) return [settled ? (bh.is_cause ? "culprit undone" : "cleared undone") : "suspect undone", settled ? (bh.is_cause ? "the cause" : "not the cause") : "git blame's pick"];
+      if ((bh.reverted || []).includes(id)) return ["undone", "undone with it"];
+      return ["", ""];
+    });
+    checks(pb, "blame_hint");
+    if (settled) say(pb, "b", bh.is_cause ? `<span class="ok">The test passes without it.</span> git blame was right this time, and the test runs prove it.`
+      : `<span class="bad">Still ${bh.outcome === "OTHER" ? "broken" : "failing"} without it.</span> git blame pointed at the wrong edit. The real cause is somewhere else.`);
+  },
+  prune(pb) {
+    say(pb, "a", "Some edits are in files the test never touches. Set them aside, then check with one run that the test still fails without them.");
+    if (S.prune) cardsRow(pb, "cards", S.order, id => S.prune.pruned.includes(id) ? ["aside", "set aside"] : ["", ""]);
+    checks(pb, "prune");
+  },
+  bisect(pb) {
+    const bi = S.bisect;
+    if (!bi) { say(pb, "s", `git blame's check already proved the cause, so no search was needed.`); return; }
+    const kept = bi.kept;
+    let lo = 0, hi = kept.length;
+    Object.values(S.tests.bisect || {}).forEach(t => {
+      if (t.running || !t.ids || !t.ids.every((x, i) => x === kept[i])) return;
+      if (t.outcome === "PASS") lo = Math.max(lo, t.ids.length);
+      if (t.outcome === "TARGET_FAIL") hi = Math.min(hi, t.ids.length);
+    });
+    const fin = bi.boundary != null;
+    const applied = new Set(S.focus && S.focus.node === "bisect" && !fin ? S.focus.ids : []);
+    say(pb, "a", `Replay the agent's edits in order and test along the way, <b>several points at once</b>, each in its own sandbox. Wherever it flips from passing to failing is the edit that broke it.`);
+    cardsRow(pb, "cards", S.order.filter(id => kept.includes(id) || (S.prune && S.prune.pruned.includes(id))), id => {
+      if (!kept.includes(id)) return ["aside", "set aside"];
+      const i = kept.indexOf(id) + 1;
+      if (fin && id === bi.boundary) return ["culprit", "breaks it"];
+      if (fin) return ["out", ""];
+      return [(i > lo && i <= hi ? "" : "out") + (applied.has(id) ? " applied" : ""), applied.has(id) ? "replayed" : ""];
+    });
+    const left = kept.slice(lo, hi).map(disp);
+    say(pb, "r", fin ? `<span class="bad">Edit ${disp(bi.boundary)}</span> is where it flips: with the edits before it the test passes, add this one and it fails.`
+      : left.length <= 1 ? `Narrowed down to <b>edit ${left[0]}</b>.` : `Still possible: <b>edit ${left[0]} to ${left[left.length - 1]}</b>.`);
+    checks(pb, "bisect");
+  },
+  confirm(pb) {
+    const c = S.confirm, root = (c && c.root) || S.viaBlame;
+    if (c) {
+      say(pb, "a", `Last check: take today's code and <b>undo only edit ${disp(c.root)}</b>${c.reverted.length > 1 ? " (and the edits built on it)" : ""}. If the test passes, that edit is the cause.`);
+      cardsRow(pb, "cards", c.kept || S.order, id => id === c.root ? ["culprit undone", "undone"] : c.reverted.includes(id) ? ["undone", "built on it"] : ["", ""]);
+      checks(pb, "confirm");
+    } else if (root) say(pb, "a", `git blame's check already undid edit ${disp(root)} and the test passed: proven.`);
+    if (S.rc) {
+      const s = S.steps.find(x => x.id === S.rc.step_id) || {};
+      say(pb, "ok", `<span class="ok">Proven.</span> <b>Edit ${disp(S.rc.step_id)}</b> broke the test: it passes right before, fails right after, and passes again when only this edit is undone.`);
+      if (S.rc.reasoning || s.reasoning) say(pb, "why", `<small>What the agent was thinking when it made this edit</small>${esc(S.rc.reasoning || s.reasoning)}`, "quote");
+      const trig = S.rc.trigger || s.trigger;
+      if (trig) say(pb, "trig", `<small>What it was reacting to</small>${esc(trig)}`, "quote");
+    }
+  },
+  lesson(pb) {
+    if (S.lookup) say(pb, "a", S.lookup.found ? `We've seen this mistake before: a <b>proven lesson</b> is already saved in Tiger Data. Reuse it.`
+      : `No saved lesson for this mistake yet, so we write one from the agent's own reasoning and the edit that broke things.`);
+    const L = S.lesson;
+    if (L) {
+      say(pb, "l", esc(L.text), "lesson");
+      const who = { gemini: "Written by Gemini", claude: S.fallback ? "Written by Claude (Gemini was unavailable)" : "Written by Claude", brain: "Saved lesson, from Tiger Data", given: "Written by hand" }[L.source] || L.source;
+      say(pb, "w", `<span class="pill">${esc(who)}</span>`, "");
+    }
+  },
+  rerun(pb) {
+    const R = S.rerun;
+    if (!R) { say(pb, "s", "Skipped."); return; }
+    say(pb, "a", `Does the lesson actually help? Rewind to just before the bad edit and give <b>the same task to fresh agents</b>: ${R.runs} without the lesson, ${R.runs} with it.`);
+    const arms = keep(pb, "arms", "arms");
+    [["A", "Without the lesson", R.a], ["B", "With the lesson", R.b]].forEach(([arm, l, done]) => {
+      const row = keep(arms, arm, "arm");
+      put(row, "l", "l", l);
+      const busy = Object.values(R.running).filter(x => x === arm).length;
+      for (let i = 0; i < R.runs; i++) {
+        const r = done[i];
+        const st = r ? OUT[r.outcome] || "other" : i < done.length + busy ? "run" : "";
+        put(row, i, "agent " + st, r ? (r.outcome === "PASS" ? "✓" : r.outcome === "OTHER" ? "?" : "✗") : st === "run" ? "…" : "");
+      }
+      put(row, "n", "pill", `${done.filter(r => r.outcome === "PASS").length} of ${done.length} got it right`);
+    });
+    if (R.verdict) {
+      const v = VERDICT[R.verdict] || [R.verdict, "", ""];
+      say(pb, "v", `<div class="big ${v[1]}">${esc(v[0])}</div>`, "");
+      say(pb, "v2", esc(v[2]));
+    }
+  },
+  result(pb) {
+    if (!S.done) { say(pb, "w", "Waiting for the run to finish."); return; }
+    const rc = S.rc;
+    say(pb, "a", rc ? `<b>Edit ${disp(rc.step_id)}</b> of the agent's work broke the test. Not a guess: proven by running it.`
+      : `No single edit could be proven. ${esc(S.stopWhy || "")}`);
+    const dur = S.done.t && S.t0 ? Math.round(S.done.t - S.t0) : null;
+    const v = S.rerun && S.rerun.verdict ? (VERDICT[S.rerun.verdict] || [S.rerun.verdict])[0] : S.lesson ? "Written" : "—";
+    say(pb, "s", `<div class="stats">
+      <div class="stat"><div class="k">The cause</div><div class="v">${rc ? "Edit " + disp(rc.step_id) : "—"}</div></div>
+      <div class="stat"><div class="k">Proof</div><div class="v">${S.runs} test runs</div></div>
+      <div class="stat"><div class="k">Time</div><div class="v">${dur != null ? `${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, "0")}` : "—"}</div></div>
+      <div class="stat"><div class="k">Lesson</div><div class="v">${esc(v)}</div></div></div>`, "");
+    if (ID) say(pb, "link", `<a class="btn" href="/a/${encodeURIComponent(ID)}">Open the full report →</a>`, "");
+  },
+};
+
+function dots(pb) {
+  const list = [{ sha: S.commits.good, subject: "Last working version", good: true }, ...S.commits.commits];
+  const tested = {};
+  Object.values(S.tests.commit || {}).forEach(t => tested[t.base] = t);
+  let lo = 0, hi = list.length - 1;
+  list.forEach((c, i) => { const t = tested[c.sha]; if (!t || t.running) return;
+    if (t.outcome === "PASS") lo = Math.max(lo, i); if (t.outcome === "TARGET_FAIL") hi = Math.min(hi, i); });
+  const done = S.nodes.commit.status === "done";
+  const row = keep(pb, "dots", "commits");
+  list.forEach((c, i) => {
+    const t = tested[c.sha];
+    let cls = "dotc" + (c.good ? " pass" : t && !t.running ? " " + (OUT[t.outcome] || "other") : "") + (t && t.running ? " probe" : "");
+    cls += i >= lo && i <= hi ? "" : " out";
+    if (done && i === hi && lo === hi - 1) cls += " culprit";
+    put(row, c.sha, cls, `<div class="d"></div><div class="t">${esc(c.good ? "Last working version" : i === list.length - 1 ? "Now" : c.subject.slice(0, 40))}</div>`);
+  });
+}
+
+let shownPanel = null;
+function renderPanel() {
+  const k = S.panelFor || "failed";
+  const n = NODES.find(x => x.k === k);
+  const pb = $("#pb");
+  if (shownPanel !== k) { pb.innerHTML = ""; shownPanel = k; $("#pname").textContent = n.t; }
+  const idx = NODES.findIndex(x => x.k === k);
+  $("#pstep").textContent = `Step ${idx + 1} of ${NODES.length}`;
+  if (!S.meta) {  // before Play: just the goal
+    $("#pname").textContent = "The goal"; $("#pstep").textContent = "";
+    say(pb, "goal", GOAL_TEXT);
+    shownPanel = null;  // the first real event clears this
+    return;
+  }
+  if (S.meta) {
+    const before = pb.scrollHeight;
+    PANELS[k](pb);
+    if (pb.scrollHeight > before && !S.pinned) pb.scrollTo({ top: pb.scrollHeight, behavior: "smooth" });
+  }
+}
+
+function render() {
+  if (!S.pinned) { const a = activeNode(); if (a) S.panelFor = a; }
+  $("#title").innerHTML = `A test broke. <b>Which change caused it, and why?</b>`;
+  renderCanvas();
+  renderPanel();
+}
+
+// ------------------------------------------------------------------ event sources (the only difference between live and replay)
+const parts = location.pathname.split("/").filter(Boolean);
+const ID = parts[1] || null;
+const REPLAY = new URLSearchParams(location.search).has("replay");
+let paused = true, stepping = false, timer = null, queue = [], qi = 0;
+
+function reset() { S = fresh(); shownPanel = null; $("#pb").innerHTML = ""; buildCanvas(); render(); }
+function handle(ev) { apply(ev); render(); }
+
+function startLive() {
+  const es = new EventSource(`/api/stream/${encodeURIComponent(ID)}`);
+  es.onopen = () => reset();  // the stream starts from the first event, so a reconnect redraws from scratch
+  es.onmessage = e => { const ev = JSON.parse(e.data); handle(ev); if (ev.type === "done") es.close(); };
+  es.addEventListener("end", () => es.close());
+}
+
+async function startReplay() {
+  let data;
+  try { data = await (await fetch(`/api/replay/${encodeURIComponent(ID)}`)).json(); } catch { data = { error: "Couldn't reach the whyagent server." }; }
+  reset();
+  if (data.error) { $("#pname").textContent = data.error; return; }
+  queue = data.events;
+  $("#ctl").classList.remove("hidden");
+  // Starts paused: the presenter presses Play. Restart goes back to the start and waits for Play again.
+  const label = () => { $("#pause").textContent = !paused ? "Pause" : qi ? "Continue" : "Play"; $("#pause").classList.toggle("on", paused); };
+  const togglePause = () => { paused = !paused; label(); if (!paused) step(); };
+  const restart = () => { clearTimeout(timer); qi = 0; stepping = false; reset(); paused = true; label(); };
+  // Next step: fast-forward through the rest of this stage, stop as the next one starts (works paused or playing)
+  const next = () => { if (qi >= queue.length) return; stepping = true; paused = false; label(); step(); };
+  window.__label = label;
+  $("#pause").onclick = togglePause; $("#restart").onclick = restart; $("#next").onclick = next;
+  document.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); togglePause(); } if (e.key === "r") restart();
+    if (e.key === "n" || e.key === "ArrowRight") next(); });
+  label();
+  if (new URLSearchParams(location.search).has("play")) togglePause();  // ?replay=1&play: start without a click
+}
+function step() {
+  clearTimeout(timer);
+  if (paused || qi >= queue.length) return;
+  const ev = queue[qi];
+  const isStageStart = ev.type === "stage" && ev.status === "start" || ev.type === "done";
+  const wait = stepping ? Math.min(ev.delay || 0, 0.12) : ev.delay || 0;
+  timer = setTimeout(() => {
+    qi++; handle(ev);
+    if (stepping && isStageStart && qi > 1) { stepping = false; paused = true; window.__label(); return; }
+    step();
+  }, wait * 1000);
+}
+
+async function pickRun() {
+  // no id: jump to a run as soon as one starts, or pick a past one
+  const pick = $("#pick"); pick.classList.remove("hidden");
+  async function look() {
+    let rows = [];
+    try { rows = await (await fetch("/api/analyses")).json(); } catch {}
+    const running = rows.find(r => r.status === "running" || r.status === "starting");
+    if (running) { location.href = `/live/${encodeURIComponent(running.id)}`; return; }
+    pick.innerHTML = `<h1>Ready</h1><p>Start an analysis and this page follows it. Or play back an earlier one:</p>` +
+      rows.filter(r => r.status === "done").slice(0, 12).map(r => `<a class="row" href="/live/${encodeURIComponent(r.id)}?replay=1">
+        <b>${esc(humanTest(r.testId || r.test))}</b><span>${esc(r.repo)}</span><span>${r.cause ? "edit found" : esc(r.status)}</span></a>`).join("");
+    setTimeout(look, 2000);
+  }
+  look();
+}
+
+window.addEventListener("resize", () => { camX = null; if (S) renderCanvas(); });
+S = fresh(); buildCanvas();
+if (!ID) pickRun(); else if (REPLAY) startReplay(); else startLive();
+</script>
+</body>
+</html>

@@ -335,6 +335,11 @@ class Reruns:
                 return RerunResult(arm, REGRESSED, note + "broke: " + ", ".join(sorted(lost)[:5]), ms(), tokens, diff)
         return RerunResult(arm, PASS, note + "target passes, no regressions, tests untouched", ms(), tokens, diff)
 
+    def _one_announced(self, rc: RootCause, job: int, lesson: str | None, arm: str) -> RerunResult:
+        """One rerun, with start/finish events so the pipeline view can show which sandbox is busy."""
+        events.emit("rerun_start", arm=arm, job=job)
+        return _announce(self.one(rc, lesson, arm), job)
+
     def run(self, rc: RootCause, lesson: str, n: int) -> tuple[list[RerunResult], list[RerunResult]]:
         """Both arms, interleaved so rate limits or drift hit both equally."""
         if not self._prepared:
@@ -346,7 +351,7 @@ class Reruns:
             self._egress = Egress(sb.image, self.agent.allow).__enter__()
         try:
             with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-                results = list(pool.map(lambda j: _announce(self.one(rc, *j)), jobs))
+                results = list(pool.map(lambda ij: self._one_announced(rc, ij[0], *ij[1]), enumerate(jobs)))
         finally:
             if self._egress is not None:
                 self._egress.__exit__(None, None, None)
@@ -393,7 +398,7 @@ def agent_by_name(name: str, context_file: str | None = None) -> Agent:
     raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code, stub)")
 
 
-def _announce(r):
+def _announce(r, job: int | None = None):
     """A finished rerun, for the live view."""
-    events.emit("rerun_done", arm=r.arm, outcome=r.outcome, detail=r.detail, ms=r.duration_ms, tokens=r.tokens)
+    events.emit("rerun_done", arm=r.arm, outcome=r.outcome, detail=r.detail, ms=r.duration_ms, tokens=r.tokens, job=job)
     return r

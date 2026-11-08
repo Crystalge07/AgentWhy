@@ -9,8 +9,9 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import entire
+from . import entire, events
 from .report import Report, state_label
+from .report import error_line as report_error_line
 from .types import PASS, TARGET_FAIL, RootCause, State
 
 
@@ -152,11 +153,14 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     writer = writer if writer in GENERATORS else "gemini"
     label = {"gemini": "Gemini", "claude": "Claude"}[writer]
     lesson, source = None, writer
+    events.stage("lesson")
     try:
         hit = entire.brain_lookup([rc.step.file], rc.failing_output)  # a validated lesson record, or None
+        events.emit("lookup", found=bool(hit), text=hit["text"] if hit else None)
         if hit:
             lesson, source = hit["text"], "brain"
     except Exception as e:  # noqa: BLE001
+        events.emit("lookup", found=False, error=str(e)[:200])
         print(f"lesson: Brain lookup failed ({e}), writing a new one")
     if getattr(args, "lesson", None):
         lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip the model
@@ -186,7 +190,9 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
                                    "claude": " (written by Claude)", "gemini": " (written by Gemini)"}.get(source, "")
           + hidden)
     report["lesson"] = {"text": lesson, "source": source}
+    events.stage("lesson", "done", text=lesson, source=source)
     if args.no_rerun:
+        events.stage("rerun", "skip", why="--no-rerun")
         return 0
 
     # Stage 8 — same agent both arms, N runs each
@@ -210,6 +216,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
           + (f", target test {target_runs}× per rerun (flaky)" if target_runs > 1 else "") + "…")
     if args.runs < 4:
         print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
+    events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson)
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
     rr.capture_diff = bool(getattr(args, "pr", False))  # --pr builds its fix from a passing rerun's diff
     a_all, b_all = rr.run(rc, lesson, args.runs)
@@ -219,6 +226,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         providers.mark_gemini_down(rr._abort)
         print(f"rerun: Gemini CLI failed ({rr._abort[:120]}) → rerunning both arms with Claude Code")
         agent = agent_by_name("claude-code")
+        events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, restart=True)
         rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
         rr.capture_diff = bool(getattr(args, "pr", False))
         a_all, b_all = rr.run(rc, lesson, args.runs)
@@ -241,6 +249,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"rerun: INCONCLUSIVE, no valid runs in {'both arms' if not a and not b else 'one arm'} ({why})")
         report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
                            "p": None, "verdict": "INCONCLUSIVE", "saved_to_brain": False}
+        events.stage("rerun", "error", verdict="INCONCLUSIVE", why=why)
         return 1
     ap, bp = sum(r.outcome == "PASS" for r in a), sum(r.outcome == "PASS" for r in b)
     verdict, p = decide(ap, len(a), bp, len(b))
@@ -261,6 +270,7 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
                        "p": p, "verdict": verdict, "saved_to_brain": saved,
                        "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
+    events.stage("rerun", "done", verdict=verdict, p=p, a=f"{ap}/{len(a)}", b=f"{bp}/{len(b)}")
     if getattr(args, "pr", False):
         stage_pr(rc, rp, rr, b_all, lesson, verdict, args, report)
     return 0
@@ -401,6 +411,7 @@ def _crashed(report: Report, e: Exception) -> int:
         import traceback
         traceback.print_exc()
     report.note(f"Analysis stopped by an error: {type(e).__name__}: {msg}")
+    events.emit("error", text=f"{type(e).__name__}: {msg}")
     return 2
 
 
@@ -411,7 +422,7 @@ def cmd_analyze(args) -> int:
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line,
                     command=getattr(args, "command", None))
-    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {args.test}",
+    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {args.test}", workers=args.workers,
                     url="" if args.live else None)  # --live: no Tiger
     report["meta"]["analysis_id"] = runlog.analysis_id  # joins this report to its Tiger rows
     _start_events(args, report, runlog.analysis_id)
@@ -449,6 +460,7 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
     # stable about 4% of the time, and stable mode's single run per state then misreads it.
     N = PRECHECK_RUNS
     rp.stage = "precheck"
+    events.stage("precheck", test=args.test, head=head[:7], good=good[:7], runs=N)
     head_res, good_res = rp.run_many([State(head, [], head), State(good, [], head)], N)
     report.log_runs("precheck", state_label(State(head, [], head)), head_res)
     report.log_runs("precheck", state_label(State(good, [], head)), good_res)
@@ -482,6 +494,8 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
     print(f"precheck: HEAD fails {h_fail}/{len(head_res)}, good commit passes {N}/{N} → {mode}")
     target_sig = next(r.signature for r in head_res if r.outcome != PASS)
     report["precheck"]["signature"] = target_sig
+    events.emit("failure", signature=target_sig,
+                error=report_error_line(next(r.output for r in head_res if r.outcome != PASS)))
     n = 1
     if mode == "flaky":
         # Size runs per state from the failure rate, so a state with the bug reads as failing 95% of the time
@@ -500,6 +514,7 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
         report["precheck"].update(fail_rate=round(rate, 2), fail_rate_low=round(low, 2), runs_per_state=n)
         print(f"precheck: HEAD fails {fails}/{len(more)} runs ({round(rate * 100)}%, at least {round(low * 100)}% "
               f"with 90% confidence) → {n} runs per state, so a state with the bug shows it ≥95% of the time")
+    events.stage("precheck", "done", mode=mode, runs_per_state=n)
     if not args.line:
         found = line_from_traceback(next(r.output for r in head_res if r.outcome != PASS))
         if found and subprocess.run(["git", "cat-file", "-e", f"HEAD:{found.rsplit(':', 1)[0]}"],
@@ -511,10 +526,13 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
     rp = Replayer(".", [], args.test, target_sig=target_sig, sandbox=sandbox, runlog=runlog, workers=args.workers)
     # flaky: n runs per state from the precheck; any target failure counts (replay.vote)
     guilty = blamed = None
+    events.stage("commit", good=good[:7], head=head[:7])
     if args.line:
         path, ln = args.line.rsplit(":", 1)
         c = _git("blame", "-L", f"{ln},{ln}", "--porcelain", "HEAD", "--", path).split()[0]
         blamed = c
+        events.emit("blame_commit", line=args.line, commit=c[:7], subject=_git("log", "-1", "--format=%s", c),
+                    code=_git("show", f"HEAD:{path}").splitlines()[int(ln) - 1:int(ln)] or [""])
         in_range = subprocess.run(["git", "merge-base", "--is-ancestor", c, good], capture_output=True).returncode != 0
         if not in_range:  # written at or before --good, where the test passes: it can't be the guilty commit
             print(f"commit: blame hint {c[:7]} is older than --good, bisecting")
@@ -535,6 +553,8 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
             print("commit: every commit since --good only touches tests → nothing to blame")
             report.note("Every commit between --good and HEAD only changes test files, which are pinned to HEAD.")
             return _finish(report, args, 2)
+        events.emit("commits", good=good[:7], commits=[
+            {"sha": c[:7], "subject": _git("log", "-1", "--format=%s", c)[:80]} for c in commits])
         # Same search as the edit-level bisect: a commit that crashes or fails differently (OTHER) is
         # never evidence, so the nearest other commit is tried instead.
         k = prefix_bisect(commits, lambda prefix: outcome(rp, "commit", State(prefix[-1], [], head), n))
@@ -545,10 +565,14 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
         guilty = commits[k - 1]
         print(f"commit: bisected → {guilty[:7]}")
 
+    events.stage("commit", "done", guilty=guilty[:7], method="blame" if guilty == blamed else "bisect",
+                 subject=_git("log", "-1", "--format=%s", guilty))
+    events.stage("entire", commit=guilty[:7])
     cp = entire.checkpoint_id(guilty)
     report["commit"] = {"sha": guilty, "method": "blame" if guilty == blamed else "bisect", "blamed": blamed,
                         "blame_confirmed": guilty == blamed if blamed else None, "checkpoint": cp, "human": cp is None}
     if cp is None:
+        events.stage("entire", "skip", why="no Entire checkpoint: a person wrote this commit")
         print(f"commit {guilty[:7]} has no Entire checkpoint → human-written, stopping")
         return _finish(report, args, 0)
     print(f"checkpoint: {cp}")
@@ -561,7 +585,9 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
 
     try:
         steps, fid = load_replayable(guilty)
+        events.stage("entire", "done", checkpoint=cp, sessions=len({s.session_id for s in steps if s.session_id}))
     except Exception as e:  # noqa: BLE001 — report it, don't crash
+        events.stage("entire", "error", why=str(e)[:200])
         print(f"session: couldn't load the Entire session ({e})")
         report.note(f"Couldn't load the Entire session for checkpoint {cp}: {e}")
         return _finish(report, args, 2)
