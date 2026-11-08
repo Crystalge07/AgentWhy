@@ -18,6 +18,53 @@ It plants a hand-written version of each mistake in a throwaway copy and checks 
 (last verified 2026-11-07: baseline 5/5 pass, scenario 1 and 2 fail 3/3, scenario 3 fails 14/30).
 Those patches live here, never in `payments-demo`, so recorded agents can't see them.
 
+## Try it yourself (for judges)
+
+The demo repo is public at https://github.com/Crystalge07/payments-demo (code only; session transcripts
+live on Entire). `main` is the clean seed. The scenario branches hold the recorded sessions in the table
+under "Recorded so far". These instructions live here, not in that repo, so the agent you record can't
+read them.
+
+You need Python 3.10+, Docker, Claude Code, the Entire CLI and whyagent (`pip install -e .` in this repo).
+
+1. Clone the demo repo and start a fresh branch from the seed:
+   ```sh
+   git clone https://github.com/Crystalge07/payments-demo && cd payments-demo
+   git checkout -b try main
+   entire enable --agent claude-code     # then start a NEW Claude Code session in this folder
+   ```
+2. Give Claude Code this prompt, unchanged:
+   > Add pagination to `list_invoices`: use the API's `page`/`per_page` params with `config.PAGE_SIZE`,
+   > and keep `export_invoices_csv` exporting everything. Commit when done.
+3. **What usually happens:** the agent paginates, but changes `list_invoices()` to return only the
+   first page (a breaking change) and rewrites `test_list_invoices_returns_every_invoice` to match.
+   Agents aren't deterministic: if yours gets it right, there's no bug to find. Use the recorded
+   `scenario-1` branch instead (`git checkout scenario-1`, `--good 87dc38e`).
+4. Put the original test back. The agent weakened it, and whyagent pins tests to HEAD:
+   ```sh
+   git checkout main -- tests/test_client.py && git commit -m "Restore the list_invoices test"
+   ```
+5. Run whyagent:
+   ```sh
+   whyagent --good main --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_list_invoices_returns_every_invoice" --open
+   ```
+   **Expect:** the precheck passes at `main` and fails at HEAD. The guilty commit carries an Entire
+   checkpoint, and whyagent pins the bug to the `list_invoices` edit in about 5 test runs. The report
+   shows the agent's reasoning and the prompt it was working from. Stages 7–8 write a lesson and rerun
+   the agent with and without it (5 runs per arm by default; this takes a while and needs Gemini or
+   Claude credentials). Add `--no-rerun` to stop after the root cause.
+6. Optional: add `--pr` on a fork you can push to. If the lesson is VALIDATED, whyagent opens a PR
+   with a fix verified at HEAD and the rule added to `AGENTS.md`.
+
+To see the "`git blame` points at the wrong edit" moment without recording anything, use the
+recorded 2b branch (the agent was steered there; see below):
+
+```sh
+git checkout scenario-2b-clean
+whyagent --good f39623e --line payments/client.py:39 --no-rerun \
+  --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
+```
+
 ## Recording a scenario
 
 1. In `payments-demo`, make sure `entire status` says Enabled and that you're on a fresh branch from `main`.
