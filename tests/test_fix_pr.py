@@ -104,7 +104,8 @@ def test_pr_uses_the_rerun_fix_verified_at_head(repo, tmp_path, monkeypatch):
     agents = git(remote, "show", f"{br}:AGENTS.md")
     assert "- Never disable TLS verification." in agents and "edit=#2 (app.py)" in agents
     assert git(remote, "rev-parse", f"{br}^") == head_before
-    assert set(git(remote, "diff", "--name-only", f"{br}^", br).split()) == {"app.py", "AGENTS.md"}
+    assert set(git(remote, "diff", "--name-only", f"{br}^", br).split()) == {"app.py", "AGENTS.md", "CLAUDE.md"}
+    assert git(remote, "show", f"{br}:CLAUDE.md") == "@AGENTS.md"  # Claude Code reads the rules too
     a_ = seen["args"]
     assert a_[a_.index("--repo") + 1] == "o/r" and a_[a_.index("--base") + 1] == "main"
     assert a_[a_.index("--head") + 1] == br
@@ -143,3 +144,12 @@ def test_github_remote(repo):
     assert fix_pr.github_remote(str(r), "upstream") == ("upstream", "a/b")
     with pytest.raises(fix_pr.FixError):
         fix_pr.github_remote(str(r), "origin")
+
+
+def test_claude_imports(tmp_path):
+    assert fix_pr.claude_imports(tmp_path, "AGENTS.md") and (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\n"
+    assert not fix_pr.claude_imports(tmp_path, "AGENTS.md")              # already imported
+    (tmp_path / "CLAUDE.md").write_text("# Project\nnotes")
+    assert fix_pr.claude_imports(tmp_path, "AGENTS.md")
+    assert (tmp_path / "CLAUDE.md").read_text() == "# Project\nnotes\n\n@AGENTS.md\n"
+    assert not fix_pr.claude_imports(tmp_path, "CLAUDE.md")              # the rules file is CLAUDE.md itself

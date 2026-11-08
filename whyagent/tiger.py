@@ -22,12 +22,12 @@ ANALYSES_DDL = """CREATE TABLE IF NOT EXISTS analyses (
 BLIND_DDL = "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER"
 
 
-def connect(url: str | None = None):
+def connect(url: str | None = None, timeout: int = 10):
     import psycopg
     url = url if url is not None else os.environ.get("TIGER_DATABASE_URL")
     if not url:
         return None
-    return psycopg.connect(url, autocommit=True, connect_timeout=10)
+    return psycopg.connect(url, autocommit=True, connect_timeout=timeout)
 
 
 class RunLog:
