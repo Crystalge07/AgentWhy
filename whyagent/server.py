@@ -198,7 +198,10 @@ def stream(results: Results, aid: str, write, poll: float = 0.25, idle_s: float 
 
 def _dashboard(name: str) -> dict:
     """/api/tiger and /api/vultr: live Tiger queries, or {"error": ...} the page shows."""
+    import importlib
+
     from . import dashboards, tiger
+    importlib.reload(dashboards)  # like the pages: an edit shows on reload, no server restart mid-demo
     try:
         conn = tiger.connect()
     except Exception as e:  # noqa: BLE001
