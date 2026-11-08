@@ -205,7 +205,9 @@ function render(d) {
           <td class="n">${r.ms_per_run ? (r.ms_per_run / 1000).toFixed(1) + " s" : ""}</td><td class="n">${secs(r.wall_s)}</td></tr>`).join("")}
     </table>
   </section>`;
-  requestAnimationFrame(() => requestAnimationFrame(() => document.querySelectorAll(".fill").forEach(f => f.style.width = f.dataset.w + "%")));
+  const fills = document.querySelectorAll(".fill");
+  fills.forEach(f => f.getBoundingClientRect());  // lay out at 0 first, so the width change animates
+  setTimeout(() => fills.forEach(f => f.style.width = Math.max(f.dataset.w, 6) + "%"), 60);
 }
 fetch("/api/vultr").then(r => r.json()).then(d => {
   if (d.error) { $("#body").innerHTML = `<p class="err">${esc(d.error)}</p>`; return; }
