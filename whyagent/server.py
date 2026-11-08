@@ -149,6 +149,8 @@ def _spawn(results: Results, body: dict) -> str:
         cmd += ["--line", body["line"].strip()]
     if body.get("no_rerun"):
         cmd.append("--no-rerun")
+    elif body.get("rerun_agent") in ("claude-code", "gemini-cli"):
+        cmd += ["--rerun-agent", body["rerun_agent"]]
     log = open(folder / "stdout.log", "w", encoding="utf-8")
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"})

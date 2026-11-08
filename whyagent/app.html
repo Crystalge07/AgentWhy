@@ -125,7 +125,8 @@
         <div><label for="fGood">Good commit (the test passes here)</label><input type="text" id="fGood" placeholder="f39623e" required></div>
         <div><label for="fLine">Failing line (optional)</label><input type="text" id="fLine" placeholder="payments/client.py:39"></div>
         <div><label for="fSandbox">Sandbox</label><select id="fSandbox"><option value="docker">Docker (isolated)</option><option value="local">Local (no isolation)</option></select></div>
-        <div><label for="fWorkers">Workers</label><select id="fWorkers"><option>1</option><option selected>2</option><option>4</option><option>8</option></select></div>
+        <div><label for="fAgent">Rerun agent</label><select id="fAgent"><option value="claude-code" selected>Claude Code</option><option value="gemini-cli">Gemini CLI (falls back to Claude)</option></select></div>
+        <div><label for="fWorkers">Workers</label><select id="fWorkers"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></div>
         <div class="actions">
           <label class="chk"><input type="checkbox" id="fNoRerun" checked> Stop after the root cause (no lesson or reruns)</label>
           <button class="btn" type="submit" id="fGo">Start</button>
@@ -170,6 +171,8 @@ const route = location.pathname.match(/^\/a\/([\w.-]+)/);
 async function loadList() {
   let rows = [];
   try { rows = await (await fetch("/api/analyses")).json(); } catch { $("#list").innerHTML = `<p class="empty">Couldn't reach the whyagent server.</p>`; return; }
+  const fresh = known ? rows.filter((r) => !known.has(r.id)).map((r) => r.id) : [];
+  known = new Set(rows.map((r) => r.id));
   if (!rows.length) {
     $("#list").innerHTML = `<p class="empty">No analyses yet. Start one with <b>New analysis</b>, or run <code>whyagent --test … --good …</code> in this repo.</p>`;
     return;
@@ -182,13 +185,14 @@ async function loadList() {
         : r.status === "done" ? `<span class="muted">${esc(r.why || "No root cause found.")}</span>`
         : r.status === "stopped" ? `<span class="muted">Stopped before it finished.</span>` : `<span class="muted">In progress…</span>`;
       const st = failed ? "failed" : r.status;
-      return `<tr class="link" data-id="${esc(r.id)}"><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span></td>
+      const live = r.status === "running" || r.status === "starting";
+      return `<tr class="link" data-id="${esc(r.id)}"${fresh.includes(r.id) ? ' style="background:#fbfcef"' : ""}><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span>${live ? `<div><a href="/a/${esc(r.id)}" style="font-size:12.5px">watch live</a></div>` : ""}</td>
         <td><code title="${esc(r.testId)}">${esc(r.test || r.id)}</code><div class="muted" style="font-size:12.5px">${esc(r.repo)} · ${esc(r.id)}</div></td>
         <td>${result}</td><td>${esc(r.mode || "-")}</td><td class="num">${r.runs ?? "-"}</td><td class="muted" style="white-space:nowrap">${esc(ago(r.when))}</td></tr>`;
     }).join("") + "</tbody></table></div>";
   document.querySelectorAll("tr.link").forEach((tr) => (tr.onclick = () => (location.href = "/a/" + tr.dataset.id)));
-  if (rows.some((r) => r.status === "running" || r.status === "starting")) setTimeout(loadList, 2000);
 }
+let known = null;  // ids on screen: a new one (started from the terminal, say) gets a "new" marker
 
 $("#newBtn").onclick = () => {
   if (route) { location.href = "/#new"; return; }
@@ -201,7 +205,7 @@ $("#form").onsubmit = async (e) => {
   try {
     const res = await fetch("/api/analyses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       test: $("#fTest").value, good: $("#fGood").value, line: $("#fLine").value, sandbox: $("#fSandbox").value,
-      workers: +$("#fWorkers").value, no_rerun: $("#fNoRerun").checked }) });
+      workers: +$("#fWorkers").value, rerun_agent: $("#fAgent").value, no_rerun: $("#fNoRerun").checked }) });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || res.statusText);
     location.href = "/a/" + out.id;
@@ -296,7 +300,10 @@ function renderLive(status) {
       if (S.done && !S.seen.has(i)) st = "skipped";
       const r = S.runs[i] || [], rr = i === 8 ? S.reruns : [];
       const runs = r.length ? `<span class="runs" title="${r.length} runs">${r.slice(0, 40).map((o) => `<i class="${o === "TARGET_FAIL" ? "f" : o === "OTHER" ? "o" : ""}"></i>`).join("")}</span>${r.length > 40 ? ` <span class="muted">+${r.length - 40}</span>` : ""}`
-        : rr.length ? `<span class="runs">${rr.map((x) => `<i class="${x.outcome === "PASS" ? "" : "f"}" title="arm ${esc(x.arm)}: ${esc(x.outcome)}"></i>`).join("")}</span>` : "";
+        : rr.length ? ["A", "B"].map((arm) => {
+            const xs = rr.filter((x) => x.arm === arm);
+            return xs.length ? `<div style="white-space:nowrap"><span class="muted" style="font-size:12px;display:inline-block;width:48px">${arm === "A" ? "without" : "with"}</span><span class="runs">${xs.map((x) => `<i class="${x.outcome === "PASS" ? "" : x.outcome === "OTHER" ? "o" : "f"}" title="${esc(x.outcome)}: ${esc(x.detail || "")}"></i>`).join("")}</span></div>` : "";
+          }).join("") : "";
       let msg = S.msg[i] || (st === "waiting" || st === "skipped" ? what : "");
       if (i === 2 && ses) msg = `${plural(ses.edits, "edit")} by ${ses.agent} from ${plural(ses.sessions || 1, "session")}, ${ses.test_edits} to test files` + (S.msg[2] ? "" : "");
       return `<tr class="${st}"><td>${i}</td><td class="name">${esc(label)}</td><td><span class="badge ${st}">${st}</span></td><td>${runs}</td><td class="msg">${esc(msg)}</td></tr>`;
@@ -333,6 +340,7 @@ if (route) {
   $("#navAll").setAttribute("aria-current", "page");
   if (location.hash === "#new") { $("#form").classList.remove("hidden"); history.replaceState(null, "", "/"); }
   loadList();
+  setInterval(loadList, 2000);  // new runs (terminal or form) and status changes appear on their own
 }
 </script>
 </body>
