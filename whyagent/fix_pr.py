@@ -186,7 +186,7 @@ def pr_body(rc: RootCause, report: dict, fix: Fix, rule: str, instructions: str)
     a, b = rr.get("a") or [], rr.get("b") or []
     lines = ["## What broke", "",
              f"Agent edit #{s.id} to `{s.file}` (session `{s.session_id[:8]}`, {s.agent}) broke `{test}`. "
-             "whyagent proved it with test runs: the test passes right before this edit, fails right after it, "
+             "agentwhy proved it with test runs: the test passes right before this edit, fails right after it, "
              "and passes again when only this edit is reverted.", ""]
     if s.reasoning:
         lines += ["**The agent's reasoning right before the edit:**",
@@ -206,7 +206,7 @@ def pr_body(rc: RootCause, report: dict, fix: Fix, rule: str, instructions: str)
         p = rr.get("p")
         lines.append(f"Validated by counterfactual reruns ({rr.get('agent')}): without the rule {a.count('PASS')}/"
                      f"{len(a)} passed, with it {b.count('PASS')}/{len(b)}" + (f" (Fisher p = {p:.3f})" if p is not None else "") + ".")
-    lines += ["", "---", "Opened by whyagent `--pr`. Review the diff before merging: the tests check what they check."]
+    lines += ["", "---", "Opened by agentwhy `--pr`. Review the diff before merging: the tests check what they check."]
     return "\n".join(lines)
 
 
@@ -239,10 +239,10 @@ def open_pr(rp, rc: RootCause, fix: Fix, d: str, rule: str, report: dict, instru
     if claude_imports(Path(d), instructions):
         _git(d, "add", "--", "CLAUDE.md")
     aid = ((report.get("meta") or {}).get("analysis_id") or "")[:6] or os.urandom(3).hex()
-    branch = f"whyagent/fix-{Path(s.file).stem}-{aid}"
+    branch = f"agentwhy/fix-{Path(s.file).stem}-{aid}"
     m = re.search(r"\S+::\S+", test)
     tname = m[0] if m else s.file
-    title = f"whyagent: fix {tname} (broken by agent edit #{s.id} in {s.file})"
+    title = f"agentwhy: fix {tname} (broken by agent edit #{s.id} in {s.file})"
     hooks = tempfile.mkdtemp(prefix="whyagent-nohooks-")  # the analyzed repo's hooks aren't ours to trigger
     try:
         _git(d, "-c", f"core.hooksPath={hooks}", "commit", "-q", "-m", title, "-m",

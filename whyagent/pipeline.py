@@ -264,9 +264,11 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
             pr["runs_without_simulated"] = True
             say(f"pruning savings: {pr['runs_with']} runs with pruning vs {pr['runs_without']} for a blind bisect")
 
-        # Stage 6: confirm from the end, ddmin if more than one cause
-        events.stage("confirm", root=root, reverted=sorted(closure({root}, dep)), kept=kept)
-        ok, coll = confirm(kept, root, dep, run("confirm"))
+        # Stage 6: confirm from the end, ddmin if more than one cause. "The end" is the real final code,
+        # every edit (`order`), not the pruned list: pruning only proved the kept edits are enough to fail,
+        # not that a pruned edit (a dynamic import the static graph missed, say) can't fail the test too.
+        events.stage("confirm", root=root, reverted=sorted(closure({root}, dep)), kept=order)
+        ok, coll = confirm(order, root, dep, run("confirm"))
         collateral = sorted(coll)
         cf = {"step_id": root, "collateral": collateral, "outcome": PASS if ok else TARGET_FAIL, "ddmin": None}
         report["confirm"] = cf
@@ -274,7 +276,7 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
         if ok:
             say(f"confirm: revert #{root} from the final state → test passes ✓ root cause")
         else:
-            dd = ddmin(kept, dep, run("ddmin"), cap=opts.ddmin_cap)
+            dd = ddmin(order, dep, run("ddmin"), cap=opts.ddmin_cap)
             cf["ddmin"] = sorted(dd) if dd else None
             if not dd:
                 say(f"confirm: revert #{root} still fails → ddmin inconclusive")

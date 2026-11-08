@@ -4,11 +4,11 @@ Context for Claude Code sessions in this repo. The full spec is `whyagent — PR
 
 ## What this is
 
-**whyagent** (placeholder name): `git blame` for agent decisions. When an AI coding agent breaks a test, whyagent finds which agent *edit* caused it, proves it with real test runs (not an LLM's opinion), shows the agent's reasoning and the error it was reacting to, then validates a lesson with counterfactual reruns before saving it.
+**agentwhy**: `git blame` for agent decisions. When an AI coding agent breaks a test, agentwhy finds which agent *edit* caused it, proves it with real test runs (not an LLM's opinion), shows the agent's reasoning and the error it was reacting to, then validates a lesson with counterfactual reruns before saving it.
 
 Pitch: "`git blame` tells you which line changed. We tell you which decision caused it, and prove it."
 
-Built for **HackTrent** (Nov 2026, ~48 h). Main track: **Best Use of Entire**. Also targeting Gemini, Vultr, Tiger Data, and GoDaddy (domain).
+Built for **HackTrent** (Nov 2026, ~48 h). Main track: **Best Use of Entire**. Also targeting Gemini, Vultr and Tiger Data. (GoDaddy is dropped.)
 
 ## Pipeline (PRD stages)
 
@@ -50,7 +50,7 @@ Team of two: Crystal (B, Mac) owns the repo; Anton (A) develops on **Windows**, 
 python3 -m venv .venv                    python -m venv .venv
 .venv/bin/pip install -e '.[dev]'        .venv\Scripts\pip install -e '.[dev]'
 .venv/bin/pytest -q                      .venv\Scripts\pytest -q
-.venv/bin/whyagent --check-entire        .venv\Scripts\whyagent --check-entire
+.venv/bin/agentwhy --check-entire        .venv\Scripts\agentwhy --check-entire
 ```
 
 Infra (Vultr VM, Tiger Data) is in `docs/setup.md`.
@@ -59,6 +59,6 @@ Infra (Vultr VM, Tiger Data) is in `docs/setup.md`.
 
 - `origin` is the **Entire** repo (`entire://aws-us-east-2.entire.io/et/agentwhy/agentwhy`). Push there so session checkpoints upload. A `github` remote (`https://github.com/Crystalge07/AgentWhy.git`) holds a code-only copy; push to it with `git push github main`.
 - Each machine must run `entire enable --agent claude-code` once after cloning (git hooks are local). Claude Code sessions started *before* that aren't recorded; restart Claude Code.
-- Commits made in a Claude Code session get an Entire checkpoint trailer linking to the session. That trailer is whyagent's input data, so don't strip it.
+- Commits made in a Claude Code session get an Entire checkpoint trailer linking to the session. That trailer is agentwhy's input data, so don't strip it.
 - **Never force-push `main`.** Work on a branch (`<name>/<topic>`) and merge in; merge to main at least every ~6 h.
 - Session transcripts upload with every push to `origin`. Never paste API keys or secrets into prompts. Keep `GEMINI_API_KEY`, `TIGER_DATABASE_URL`, etc. in env vars, never in committed files.

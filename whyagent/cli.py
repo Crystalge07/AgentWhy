@@ -492,10 +492,19 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
         mode = "flaky"
         report["precheck"].update(head_fail=h_fail, n=len(head_res), mode=mode)
     print(f"precheck: HEAD fails {h_fail}/{len(head_res)}, good commit passes {N}/{N} → {mode}")
-    target_sig = next(r.signature for r in head_res if r.outcome != PASS)
+    # The failure to explain: HEAD's most common failure signature. Not just the first failing run's, which
+    # may be a timeout (never TARGET_FAIL, so no state would ever match) or a rarer second failure mode.
+    from collections import Counter
+
+    sigs = Counter(r.signature for r in head_res if r.outcome != PASS and r.signature != "timeout")
+    if not sigs:
+        print("precheck: HEAD only ever times out → abort: no failure output to match states against")
+        report.note("Aborted: the test only timed out at HEAD, so there is no failure signature to bisect on.")
+        return _finish(report, args, 2)
+    target_sig = sigs.most_common(1)[0][0]
     report["precheck"]["signature"] = target_sig
     events.emit("failure", signature=target_sig,
-                error=report_error_line(next(r.output for r in head_res if r.outcome != PASS)))
+                error=report_error_line(next(r.output for r in head_res if r.signature == target_sig)))
     n = 1
     if mode == "flaky":
         # Size runs per state from the failure rate, so a state with the bug reads as failing 95% of the time
@@ -516,7 +525,7 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
               f"with 90% confidence) → {n} runs per state, so a state with the bug shows it ≥95% of the time")
     events.stage("precheck", "done", mode=mode, runs_per_state=n)
     if not args.line:
-        found = line_from_traceback(next(r.output for r in head_res if r.outcome != PASS))
+        found = line_from_traceback(next(r.output for r in head_res if r.signature == target_sig))
         if found and subprocess.run(["git", "cat-file", "-e", f"HEAD:{found.rsplit(':', 1)[0]}"],
                                     capture_output=True).returncode == 0:
             args.line = report["meta"]["line"] = found
@@ -635,7 +644,7 @@ def main(argv=None) -> int:
     # (an editable install in a clone of whyagent). Neither overrides variables already set.
     load_dotenv(find_dotenv(usecwd=True))
     load_dotenv()
-    p = argparse.ArgumentParser(prog="whyagent", description="Find which agent decision broke a test, and prove it.")
+    p = argparse.ArgumentParser(prog="agentwhy", description="Find which agent decision broke a test, and prove it.")
     p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
     p.add_argument("--good", help="commit where the test passes")
     p.add_argument("--line", help="file:line the failure points at (blame hint)")
@@ -699,7 +708,7 @@ def main(argv=None) -> int:
     if "--id" in shown:  # --serve's own bookkeeping: rerunning with it would overwrite that analysis
         i = shown.index("--id")
         del shown[i:i + 2]
-    args.command = "whyagent " + shlex.join(shown)  # shown on the report
+    args.command = "agentwhy " + shlex.join(shown)  # shown on the report
     if args.live and (args.trail or args.lesson or args.no_rerun or args.pr):
         p.error("--live can't be combined with --trail, --lesson, --no-rerun or --pr")
     if args.pr and args.no_rerun:
@@ -720,7 +729,7 @@ def main(argv=None) -> int:
             return 0
         print(f"hook: {install_hook(path)} in {path}\n  SessionStart → {hook_command()}\n"
               "  New Claude Code sessions start with your validated rules. Before recording a demo session, run "
-              "whyagent --uninstall-hook (the rules would steer the agent away from the mistake).")
+              "agentwhy --uninstall-hook (the rules would steer the agent away from the mistake).")
         return 0
     if args.rules:
         from .rules import rules_markdown

@@ -8,7 +8,7 @@
    - OS: Ubuntu 24.04 LTS (or Marketplace → Docker, which preinstalls it)
    - Region: closest to the venue
    - Size: 4 vCPU / 8 GB to start (≈ 4 workers). Resize to 8 vCPU for the demo if credits allow.
-   - Attach your SSH key; hostname `whyagent`.
+   - Attach your SSH key; hostname `agentwhy`.
 4. **Install Docker** (skip if you used the Docker marketplace image):
    ```sh
    ssh root@<IP>
@@ -16,7 +16,7 @@
    docker run --rm hello-world
    ```
 5. **Firewall.** Network → Firewall: allow inbound 22 only. Sandboxes need no inbound ports.
-6. **Run whyagent on the VM itself**, not via a remote Docker context — sandboxes bind-mount git worktrees, and those paths must exist on the Docker host.
+6. **Run agentwhy on the VM itself**, not via a remote Docker context — sandboxes bind-mount git worktrees, and those paths must exist on the Docker host.
    ```sh
    apt-get install -y git python3-venv
    git clone <this repo> && cd agentwhy

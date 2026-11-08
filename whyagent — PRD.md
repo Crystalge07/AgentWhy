@@ -4,19 +4,19 @@ Nov 7, 2026 · @crystal
 
 ## Overview
 
-`git blame` tells you which line changed. whyagent tells you which agent decision caused a failing test, proves it by experiment, and proves the fix works.
+`git blame` tells you which line changed. agentwhy tells you which agent decision caused a failing test, proves it by experiment, and proves the fix works.
 
 **Problem.** When a coding agent breaks something, devs dig through chat logs by hand to work out why it did that. Blame points at a line, but the line that breaks is often not the edit that caused it, and blame says nothing about the reasoning behind it.
 
 **Approach.** Blame is the fast first guess. Bisect is the engine that confirms it or finds the real cause. Counterfactual reruns then test whether a written lesson actually stops the agent repeating the mistake.
 
-**Built on** Entire, which records agent sessions (prompts, reasoning, tool calls) and links each one to its commit through a checkpoint trailer. Entire supplies the raw data; whyagent does the causal analysis, which is about 90% Python.
+**Built on** Entire, which records agent sessions (prompts, reasoning, tool calls) and links each one to its commit through a checkpoint trailer. Entire supplies the raw data; agentwhy does the causal analysis, which is about 90% Python.
 
 **Hackathon:** HackTrent, about 48 hours, team of 2. Main track: Best Use of Entire.
 
 ## Goals, non-goals, success metrics
 
-The v1 bar: on every seeded bug, whyagent names the correct root-cause edit and backs it with test runs, not an LLM's opinion.
+The v1 bar: on every seeded bug, agentwhy names the correct root-cause edit and backs it with test runs, not an LLM's opinion.
 
 **Goals**
 
@@ -45,10 +45,10 @@ The v1 bar: on every seeded bug, whyagent names the correct root-cause edit and 
 
 ## User flow and CLI
 
-The user points whyagent at one failing test and a known-good commit; everything else is automatic.
+The user points agentwhy at one failing test and a known-good commit; everything else is automatic.
 
 ```
-whyagent \
+agentwhy \
   --test "pytest tests/test_auth.py::test_login" \
   --good a1b2c3d \
   --line src/auth.py:42 \
@@ -237,7 +237,7 @@ Entire is the main track; Gemini, Vultr and Tiger Data each do real work in the 
 - **Vultr** hosts the Docker sandbox pool, so bisect rounds and rerun arms run in parallel instead of one at a time on a laptop.
 - **Tiger Data** logs every test run and rerun (outcome, duration, tokens) and powers the chart showing fewer runs with Graph pruning. That's the token-savings proof Entire wants too.
 
-| Track | What it does in whyagent | Stage | Priority |
+| Track | What it does in agentwhy | Stage | Priority |
 | --- | --- | --- | --- |
 | Entire | Sessions are the input data; Graph prunes the search; Brain stores and serves validated lessons; Trails opens the fix (stretch) | 1, 2, 4, 7 | Core |
 | Gemini | Writes lessons; Gemini CLI is the default rerun agent (free tier keeps the 10 runs per bug affordable) | 7, 8 | Core |
@@ -250,7 +250,7 @@ Entire is the main track; Gemini, Vultr and Tiger Data each do real work in the 
 | --- | --- | --- | --- |
 | Now (H0–4) | Entire Sessions | A | Verify transcripts store edit old/new text, reasoning, tool outputs; build the seeded repo so recording can start by H4. Biggest risk, everything depends on it |
 | Now (H0–4) | Entire Graph + Brain | A | 30-min access check only (CLI/MCP, what they return); build later |
-| Now (H0–4) | Vultr | B | Redeem credits (approval can lag), Ubuntu 24.04 VM 4 vCPU / 8 GB, install Docker. Run whyagent on the VM itself, since sandboxes bind-mount worktrees |
+| Now (H0–4) | Vultr | B | Redeem credits (approval can lag), Ubuntu 24.04 VM 4 vCPU / 8 GB, install Docker. Run agentwhy on the VM itself, since sandboxes bind-mount worktrees |
 | Now (H0–4) | Gemini | B | API key; confirm Gemini CLI headless one-shot with a turn limit. If awkward, pick the backup rerun agent now |
 | Now (H0–4) | Tiger Data | B | Create service, apply schema, `TIGER_DATABASE_URL`. ~10 min; logging from day one means chart data accumulates for free |
 | Later (H16–28) | Entire Graph | A | Pruning + verification run, after plain bisect works. First cut if behind |
@@ -358,5 +358,5 @@ The biggest risk is that Entire's transcripts don't store full edit contents; ve
 
 **Open decisions:**
 
-- [ ] Final name (`whyagent` is a placeholder).
+- [ ] Final name (`agentwhy` is a placeholder).
 - [ ] Rerun agent default if Gemini CLI headless turns out to be awkward.

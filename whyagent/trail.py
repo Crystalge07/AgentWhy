@@ -38,7 +38,7 @@ def finding_body(rc: RootCause, report: dict) -> str:
     test = next((w for w in test.split() if "::" in w), test)
     pre = report.get("precheck") or {}
     bh = report.get("blame_hint") or {}
-    lines = [f"**whyagent: this agent edit broke `{test}`**", "",
+    lines = [f"**agentwhy: this agent edit broke `{test}`**", "",
              "Proven by test runs: the test passes right before this edit, fails right after it, and passes "
              f"again when only this edit is reverted ({len(report.get('runs') or [])} test runs, {pre.get('mode', '?')} mode).",
              "Tests were pinned to HEAD, so edits the agent made to tests don't hide the bug."]

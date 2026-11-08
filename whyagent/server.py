@@ -6,6 +6,8 @@
                 Live from /api/stream/<id> (Server-Sent Events), or ?replay=1 from /api/replay/<id>: same page,
                 only the event source differs, and it says which one it is showing.
   /tiger, /vultr  how we use Tiger Data and Vultr, from live Tiger queries (dashboards.py)
+  /entire, /gemini  how we use Entire and Gemini, with what they gave the newest finished analysis (/api/latest)
+  /site.css     the shared look; every page's top bar is filled in by _page (Pipeline, Results, "Built with" menu)
   /api/...      the list, events since a byte offset, and POST to start a new analysis
 
 An analysis started from the terminal writes the same history folder, so it shows up here live as well.
@@ -215,16 +217,82 @@ def _dashboard(name: str) -> dict:
         return {"error": f"Tiger query failed: {type(e).__name__}: {str(e)[:200]}"}
 
 
+SPONSORS = [  # (path, name, what it does for whyagent): the top bar's "Built with" menu
+    ("entire", "Entire", "The agent's recorded session: every edit and why"),
+    ("gemini", "Gemini", "Writes the lesson from the agent's reasoning"),
+    ("tiger", "Tiger Data", "Memory: every test run and proven lesson"),
+    ("vultr", "Vultr", "Runs the sandboxes in parallel"),
+]
+_CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>'
+# Light/dark: the saved choice is applied in <head> before first paint; with none saved the system theme wins.
+THEME_HEAD = ("<script>try{const t=localStorage.getItem('agentwhy-theme');"
+              "if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>")
+THEME_TOGGLE = (  # bottom-right corner of every page: shows the theme you'd switch to
+    '<button type="button" class="theme-fab" aria-label="Switch light or dark theme" title="Light or dark">'
+    '<span class="moon">🌙</span><span class="sun">☀️</span></button>'
+    "<script>document.currentScript.previousElementSibling.onclick=()=>{const r=document.documentElement,"
+    "d=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches,t=d?'light':'dark';"
+    "r.dataset.theme=t;try{localStorage.setItem('agentwhy-theme',t)}catch(e){}}</script>")
+
+
+def site_bar(current: str, extra: str = "") -> str:
+    """The top bar every page shares, so moving between pages never shifts it. `current`: live, results or a sponsor.
+    `extra` goes between the logo and the links (the pipeline view's title and replay controls)."""
+    cur = lambda k: ' aria-current="page"' if k == current else ""  # noqa: E731
+    items = "".join(f'<a href="/{k}"{cur(k)}><b>{n}</b><span>{d}</span></a>' for k, n, d in SPONSORS)
+    menu_cur = " current" if current in {k for k, _, _ in SPONSORS} else ""
+    return (f'<header class="site-bar"><a class="site-logo" href="/live">agent<i>why</i></a>{extra}<span class="site-sp"></span>'
+            f'<nav class="site-nav" aria-label="Site"><a href="/live"{cur("live")}>Pipeline</a><a href="/"{cur("results")}>Results</a>'
+            f'<div class="site-menu{menu_cur}"><button type="button" aria-expanded="false" aria-haspopup="true">Built with{_CHEVRON}</button>'
+            f'<div class="site-menu-list" hidden>{items}</div></div></nav></header>'
+            "<script>(()=>{const m=document.currentScript.previousElementSibling.querySelector('.site-menu'),b=m.querySelector('button'),"
+            "l=m.querySelector('.site-menu-list'),set=o=>{l.hidden=!o;b.setAttribute('aria-expanded',o)};"
+            "b.onclick=e=>{e.stopPropagation();set(l.hidden)};document.addEventListener('click',e=>{if(!m.contains(e.target))set(false)});"
+            "document.addEventListener('keydown',e=>{if(e.key==='Escape')set(false)})})()</script>" + THEME_TOGGLE)
+
+
+def _page(name: str, current: str) -> str:
+    """A page of the site, read per request (an edit shows on reload, no server restart mid-demo), with its top bar."""
+    html = resources.files("whyagent").joinpath(name).read_text(encoding="utf-8")
+    html = html.replace("</head>", THEME_HEAD + "</head>", 1)
+    m = re.search(r"<!--site-bar(?::(.*?))?-->", html, re.S)
+    return html if not m else html[:m.start()] + site_bar(current, m.group(1) or "") + html[m.end():]
+
+
 def _back_link(html: str) -> str:
-    """The saved report, with a way back to the list."""
-    return html.replace('<div class="logo">whyagent <span>report</span></div>',
-                        '<a class="logo" href="/" style="color:inherit;text-decoration:none">whyagent <span>results</span></a>'
-                        '<a class="tab" href="/" style="display:flex;align-items:center;text-decoration:none">All results</a>', 1)
+    """The saved report (a standalone file), given the site's top bar and stylesheet."""
+    html = html.replace("</head>", '<link rel="stylesheet" href="/site.css"></head>', 1)
+    html = re.sub(r"<!--theme-fab-->.*?<!--/theme-fab-->", "", html, count=1, flags=re.S)
+    return re.sub(r'<nav class="bar" aria-label="Report navigation">\s*<div class="logo">(?:agentwhy|whyagent) <span>report</span></div>',
+                  lambda _: site_bar("results") + '<nav class="bar sub-bar" aria-label="Report navigation">', html, count=1)
+
+
+def latest(results: "Results") -> dict:
+    """/api/latest: what Entire and Gemini contributed to the newest finished analysis that found a cause."""
+    for row in results.list():
+        if row["status"] != "done" or not row.get("cause"):
+            continue
+        d = results.folder(row["id"])
+        rep = _read_json(d / "report.json") if d else None
+        if not rep:
+            continue
+        ses, rc, cm = rep.get("session") or {}, rep.get("root_cause") or {}, rep.get("commit") or {}
+        steps = ses.get("steps") or []
+        step = next((s for s in steps if s["id"] == rc.get("step_id")), {})
+        cut = lambda t, n=600: (t or "")[:n]  # noqa: E731
+        return {"id": row["id"], "repo": (rep.get("meta") or {}).get("repo"), "test": row["test"],
+                "checkpoint": cm.get("checkpoint"), "commit": (cm.get("sha") or "")[:7], "agent": ses.get("agent"),
+                "prompt": cut(ses.get("prompt"), 800), "edits": len(steps),
+                "with_reasoning": sum(1 for s in steps if s.get("reasoning")), "with_trigger": sum(1 for s in steps if s.get("trigger")),
+                "culprit": {"edit": step.get("id"), "file": step.get("file"), "line": step.get("line"),
+                            "reasoning": cut(step.get("reasoning")), "trigger": cut(step.get("trigger")),
+                            "old": cut(step.get("old_text"), 400), "new": cut(step.get("new_text"), 400)},
+                "lesson": rep.get("lesson"), "rerun": {k: v for k, v in (rep.get("rerun") or {}).items() if k in ("agent", "a", "b", "p", "verdict")}}
+    return {"error": "No finished analysis with a proven cause yet."}
 
 
 def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
     results = Results(history)
-    app = resources.files("whyagent").joinpath("app.html").read_text(encoding="utf-8")
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet: the live view polls
@@ -246,16 +314,19 @@ def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
             u = urlparse(self.path)
             parts = [p for p in u.path.split("/") if p]
             if not parts:
-                return self.send(200, app)
+                return self.send(200, _page("app.html", "results"))
+            if parts == ["site.css"]:
+                return self.send(200, resources.files("whyagent").joinpath("site.css").read_text(encoding="utf-8"), "text/css; charset=utf-8")
+            if parts == ["api", "latest"]:
+                return self.json(latest(results))
             if parts == ["api", "analyses"]:
                 return self.json(results.list())
-            if parts in (["tiger"], ["vultr"]):
-                return self.send(200, resources.files("whyagent").joinpath(parts[0] + ".html").read_text(encoding="utf-8"))
+            if len(parts) == 1 and parts[0] in {k for k, _, _ in SPONSORS}:
+                return self.send(200, _page(parts[0] + ".html", parts[0]))
             if parts in (["api", "tiger"], ["api", "vultr"]):
                 return self.json(_dashboard(parts[1]))
             if parts[0] == "live" and len(parts) <= 2:
-                # read per request: a tweak to the page shows on reload, no server restart mid-demo
-                return self.send(200, resources.files("whyagent").joinpath("pipeline_view.html").read_text(encoding="utf-8"))
+                return self.send(200, _page("pipeline_view.html", "live"))
             if len(parts) == 3 and parts[:2] == ["api", "stream"]:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -286,7 +357,7 @@ def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
                 s = results.summary(d) or {}
                 if s.get("status") == "done" and (d / "report.html").exists():
                     return self.send(200, _back_link((d / "report.html").read_text(encoding="utf-8")))
-                return self.send(200, app)  # live view (or a stopped run's log)
+                return self.send(200, _page("app.html", "results"))  # live view (or a stopped run's log)
             self.send(404, "Not found.", "text/plain; charset=utf-8")
 
         def do_POST(self):
@@ -306,7 +377,7 @@ def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
 
     srv = ThreadingHTTPServer(("127.0.0.1", port), H)
     url = f"http://127.0.0.1:{port}/"
-    print(f"whyagent results: {url}  (history: {history})  Ctrl-C to stop")
+    print(f"agentwhy results: {url}  (history: {history})  Ctrl-C to stop")
     if open_browser:
         webbrowser.open(url)
     try:

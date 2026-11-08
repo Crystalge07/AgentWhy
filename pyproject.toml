@@ -13,13 +13,14 @@ dependencies = ["psycopg[binary]>=3.1", "google-genai>=1.0", "python-dotenv>=1.0
 dev = ["pytest>=7"]
 
 [project.scripts]
-whyagent = "whyagent.cli:main"
+agentwhy = "whyagent.cli:main"
+whyagent = "whyagent.cli:main"  # old name, kept so existing scripts and hooks work
 
 [tool.setuptools.packages.find]
 include = ["whyagent*"]
 
 [tool.setuptools.package-data]
-whyagent = ["report_template.html", "app.html", "pipeline_view.html", "tiger.html", "vultr.html"]
+whyagent = ["report_template.html", "app.html", "pipeline_view.html", "tiger.html", "vultr.html", "entire.html", "gemini.html", "site.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

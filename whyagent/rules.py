@@ -16,7 +16,7 @@ from pathlib import Path
 from . import entire
 from .live.instructions import _norm, has_rule
 
-HEADER = ("## Rules from whyagent\n\n"
+HEADER = ("## Rules from agentwhy\n\n"
           "Each rule below was learned from a mistake an agent made in one of this user's repositories, and "
           "proven by reruns: agents given the rule fixed the task far more often than agents without it. "
           "Follow them unless the user says otherwise.\n")
@@ -59,7 +59,7 @@ def hook_command() -> str:
 
 def _is_ours(h: dict) -> bool:
     c = h.get("command", "")
-    return "whyagent.cli --rules" in c or "whyagent --rules" in c
+    return "whyagent.cli --rules" in c or "whyagent --rules" in c or "agentwhy --rules" in c
 
 
 def _load(path: Path) -> dict:

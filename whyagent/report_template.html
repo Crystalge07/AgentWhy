@@ -3,19 +3,58 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent report</title>
-<meta name="description" content="whyagent root-cause report.">
+<title>agentwhy report</title>
+<meta name="description" content="agentwhy root-cause report.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>try{const t=localStorage.getItem('agentwhy-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
   :root {
     --bg: #fcfcfb; --paper: #ffffff; --line: #e7e7e2; --line-2: #d6d6cf;
     --ink: #121211; --ink-2: #3d3d3a; --muted: #6e6e68; --faint: #a3a39c;
     --hi: #eef36a;                     /* highlighter, used sparingly: the answer */
     --pass: #1f8a70; --fail: #e0592a; --other: #8a6fd1; --blame: #a86b12; --pruned: #3a5bd9;
-    --sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --on-ink: #ffffff; --dot: #dcdcd5; --versus-bg: #fbfcef;
+    --yes-line: #a9d6c8; --no-line: #e6cfa5; --fail-line: #f1bba5; --other-line: #d5c9f1;
+    --del-bg: #fdeee8; --del-ink: #a8401c; --add-bg: #e7f4ef; --add-ink: #17664f;
+    --bar-bg: #eceef9; --blind-stripe: #d6dcf7; --blind-bg: #eef0fb;
+    color-scheme: light;
+  }
+  /* Dark: follows the system unless the toggle picked one (html[data-theme], saved in localStorage). */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14130f; --paper: #1c1b16; --line: #302e27; --line-2: #45423a;
+      --ink: #edebe3; --ink-2: #cbc7bb; --muted: #9b968a; --faint: #6d695f; --hi: #5a5714;
+      --pass: #4cc49a; --fail: #f07a4c; --other: #a68ef0; --blame: #e0a74a; --pruned: #7f9cff;
+      --on-ink: #14130f; --dot: #34322b; --versus-bg: #1f1f14;
+      --yes-line: #2e5f50; --no-line: #6a5226; --fail-line: #6e3520; --other-line: #4a3f78;
+      --del-bg: #3a1f15; --del-ink: #f4a07e; --add-bg: #16302a; --add-ink: #7fd9b6;
+      --bar-bg: #1e2540; --blind-stripe: #2e3a6a; --blind-bg: #1b2240;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14130f; --paper: #1c1b16; --line: #302e27; --line-2: #45423a;
+    --ink: #edebe3; --ink-2: #cbc7bb; --muted: #9b968a; --faint: #6d695f; --hi: #5a5714;
+    --pass: #4cc49a; --fail: #f07a4c; --other: #a68ef0; --blame: #e0a74a; --pruned: #7f9cff;
+    --on-ink: #14130f; --dot: #34322b; --versus-bg: #1f1f14;
+    --yes-line: #2e5f50; --no-line: #6a5226; --fail-line: #6e3520; --other-line: #4a3f78;
+    --del-bg: #3a1f15; --del-ink: #f4a07e; --add-bg: #16302a; --add-ink: #7fd9b6;
+    --bar-bg: #1e2540; --blind-stripe: #2e3a6a; --blind-bg: #1b2240;
+    color-scheme: dark;
+  }
+  .theme-fab { position: fixed; right: 16px; bottom: 16px; z-index: 100; width: 44px; height: 44px; border-radius: 50%;
+               border: 1px solid var(--line-2); background: var(--paper); box-shadow: 0 4px 14px var(--shadow, rgba(0,0,0,.12));
+               cursor: pointer; padding: 0; font-size: 21px; line-height: 1; display: grid; place-items: center; transition: transform .15s; }
+  .theme-fab:hover { transform: scale(1.08); }
+  .theme-fab .sun, :root[data-theme="dark"] .theme-fab .moon { display: none; }
+  :root[data-theme="dark"] .theme-fab .sun { display: inline; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .theme-fab .moon { display: none; }
+    :root:not([data-theme="light"]) .theme-fab .sun { display: inline; }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -39,7 +78,7 @@
   .tab { background: none; border: 0; padding: 0 12px; height: 100%; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
   .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
   .bar .spacer { flex: 1; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer; font-size: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--ink); background: var(--ink); color: var(--on-ink); cursor: pointer; font-size: 14px; }
   .btn.ghost { background: var(--paper); color: var(--ink); border-color: var(--line-2); }
   @media (max-width: 760px) { .bar { padding: 0 16px; gap: 12px; } .bar .btn { display: none; } }
 
@@ -64,16 +103,16 @@
   @media (max-width: 900px) { .story { grid-template-columns: 1fr 1fr; } .story > div:nth-child(3) { border-left: 0; } .story > div:nth-child(n+3) { border-top: 1px solid var(--line); } .story > div::before { display: none; } }
   @media (max-width: 560px) { .story { grid-template-columns: 1fr; } .story > div { border-left: 0 !important; border-top: 1px solid var(--line); } .story > div:first-child { border-top: 0; } }
 
-  /* blame vs whyagent */
+  /* blame vs agentwhy */
   .versus { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; border: 1px solid var(--line); background: var(--paper); }
   .versus > div { padding: 20px 22px; display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; }
-  .versus > div + div { border-left: 1px solid var(--line); background: #fbfcef; }
+  .versus > div + div { border-left: 1px solid var(--line); background: var(--versus-bg); }
   .versus .who2 { font-size: 13px; color: var(--muted); }
   .versus .pick { font-size: 18px; font-weight: 500; }
   .versus .why { font-size: 14px; color: var(--ink-2); grid-column: 1 / -1; }
   .mark { grid-row: 1 / 3; grid-column: 2; align-self: start; font-family: var(--mono); font-size: 12px; padding: 3px 8px; border: 1px solid; }
-  .mark.no { color: var(--blame); border-color: #e6cfa5; }
-  .mark.yes { color: var(--pass); border-color: #a9d6c8; }
+  .mark.no { color: var(--blame); border-color: var(--no-line); }
+  .mark.yes { color: var(--pass); border-color: var(--yes-line); }
   @media (max-width: 700px) { .versus { grid-template-columns: 1fr; } .versus > div + div { border-left: 0; border-top: 1px solid var(--line); } }
 
   /* section rows: heading on the left, evidence on the right */
@@ -110,7 +149,7 @@
   .seg { display: inline-flex; border: 1px solid var(--line-2); background: var(--paper); }
   .seg button { background: none; border: 0; padding: 6px 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
   .seg button + button { border-left: 1px solid var(--line-2); }
-  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); }
   .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
   .legend i { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 6px; }
   .strip { border: 1px solid var(--line); background: var(--paper); padding: 16px 8px 14px; overflow-x: auto; }
@@ -139,9 +178,9 @@
   .note { font-size: 12px; color: var(--faint); min-height: 18px; }
   .stop[data-kind="test"] :is(.num, .file), .stop[data-kind="unreachable"] :is(.num, .file) { color: var(--faint); }
   .ran { margin-top: 6px; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px; border: 1px solid; }
-  .ran.pass { color: var(--pass); border-color: #a9d6c8; }
-  .ran.fail { color: var(--fail); border-color: #f1bba5; }
-  .ran.other { color: var(--other); border-color: #d5c9f1; }
+  .ran.pass { color: var(--pass); border-color: var(--yes-line); }
+  .ran.fail { color: var(--fail); border-color: var(--fail-line); }
+  .ran.other { color: var(--other); border-color: var(--other-line); }
   .ran.none { visibility: hidden; }
 
   .detail { border: 1px solid var(--line); border-top: 0; background: var(--paper); padding: 22px 22px 24px; }
@@ -162,12 +201,12 @@
   .reason.empty { font-style: normal; color: var(--faint); }
   pre { margin: 0; font: 12.5px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; }
   .diff div { padding: 0 6px; }
-  .diff .del { background: #fdeee8; color: #a8401c; }
-  .diff .add { background: #e7f4ef; color: #17664f; }
+  .diff .del { background: var(--del-bg); color: var(--del-ink); }
+  .diff .add { background: var(--add-bg); color: var(--add-ink); }
   @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
 
   /* the narrowing graph */
-  .canvas { border: 1px solid var(--line); background-color: var(--paper); background-image: radial-gradient(#dcdcd5 1px, transparent 1px); background-size: 18px 18px; overflow-x: auto; }
+  .canvas { border: 1px solid var(--line); background-color: var(--paper); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 18px 18px; overflow-x: auto; }
   .canvas svg { display: block; min-width: 820px; width: 100%; height: auto; }
   .canvas text { font-family: var(--mono); font-size: 12px; fill: var(--ink-2); }
   .canvas .k { fill: var(--muted); }
@@ -218,12 +257,12 @@
   .chart svg { display: block; width: 100%; height: 240px; }
   .chart .ax { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
   .chart .grid { stroke: var(--line); stroke-width: 1; }
-  .tip { position: absolute; pointer-events: none; background: var(--ink); color: #fff; font-size: 12.5px; padding: 8px 10px; line-height: 1.5; display: none; white-space: nowrap; z-index: 3; }
+  .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--on-ink); font-size: 12.5px; padding: 8px 10px; line-height: 1.5; display: none; white-space: nowrap; z-index: 3; }
   .tip i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; }
   .hbar { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; align-items: center; }
   .hbar + .hbar { margin-top: 6px; }
   .hbar .b { position: relative; height: 30px; display: flex; align-items: center; padding-left: 10px; font-size: 13.5px; }
-  .hbar .b::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--w); background: #eceef9; z-index: 0; }
+  .hbar .b::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--w); background: var(--bar-bg); z-index: 0; }
   .hbar .b span { position: relative; }
   .hbar .v { font-variant-numeric: tabular-nums; font-size: 13.5px; color: var(--ink-2); min-width: 44px; text-align: right; }
   .pair { padding: 10px 0; border-top: 1px solid var(--line); }
@@ -234,17 +273,18 @@
   .pair .l + .l { margin-top: 4px; }
   .pair .l div { height: 10px; }
   .pair .l .p { background: var(--pruned); }
-  .pair .l .bl { border: 1.5px solid var(--pruned); background: repeating-linear-gradient(135deg, transparent 0 4px, #d6dcf7 4px 6px); }
+  .pair .l .bl { border: 1.5px solid var(--pruned); background: repeating-linear-gradient(135deg, transparent 0 4px, var(--blind-stripe) 4px 6px); }
   .pair .l em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
   .dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; vertical-align: 1px; }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
+<!--theme-fab--><button type="button" class="theme-fab" id="themeToggle" aria-label="Switch light or dark theme" title="Light or dark"><span class="moon">🌙</span><span class="sun">☀️</span></button><!--/theme-fab-->
 <div class="frame">
 
   <nav class="bar" aria-label="Report navigation">
-    <div class="logo">whyagent <span>report</span></div>
+    <div class="logo">agentwhy <span>report</span></div>
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" aria-selected="true" aria-controls="view-report" id="tab-report">Report</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-data" id="tab-data">Run data</button>
@@ -373,7 +413,7 @@ ORDER BY runs DESC;</pre></details>
             <h2>Pruning vs blind bisect</h2>
             <div class="legend">
               <span><i style="background:var(--pruned);height:8px;width:12px"></i>with pruning</span>
-              <span><i style="border:1.5px solid var(--pruned);height:8px;width:12px;background:#eef0fb"></i>blind</span>
+              <span><i style="border:1.5px solid var(--pruned);height:8px;width:12px;background:var(--blind-bg)"></i>blind</span>
             </div>
           </header>
           <div class="body" id="pruning"></div>
@@ -402,6 +442,13 @@ GROUP BY a.analysis_id;</pre></details>
    REPORT: one analysis. status = test result right after this edit; ran = we executed it there.
    RUNS: rows from the Tiger Data `runs` hypertable, or this run's own when Tiger isn't configured.
 ------------------------------------------------------------------- */
+// a report served by --serve uses the site's button instead (this one is stripped)
+if (document.getElementById("themeToggle")) document.getElementById("themeToggle").onclick = () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("agentwhy-theme", r.dataset.theme); } catch (e) {}
+};
 const DATA = JSON.parse(document.getElementById("whyagent-data").textContent);
 const REPORT = DATA.report;
 const ANALYSES = DATA.analyses;
@@ -420,8 +467,8 @@ const NAME = { PASS: "Pass", TARGET_FAIL: "Target fail", OTHER: "Other" };
 const CAUSE = REPORT.stops.find((s) => s.tag === "cause");
 const BLAME = REPORT.blame && !REPORT.blame.right ? REPORT.blame : null;  // git blame picked the wrong edit
 
-document.title = `whyagent report · ${REPORT.repo || REPORT.testName}`;
-document.querySelector('meta[name="description"]').content = `whyagent root-cause report for ${REPORT.testName} in ${REPORT.repo}.`;
+document.title = `agentwhy report · ${REPORT.repo || REPORT.testName}`;
+document.querySelector('meta[name="description"]').content = `agentwhy root-cause report for ${REPORT.testName} in ${REPORT.repo}.`;
 
 /* tabs */
 function showTab(which) {
@@ -481,7 +528,7 @@ function renderHero() {
     <div><span class="who2">git blame on <code>${esc(b.file)}:${b.line}</code> says</span><span class="mark no">wrong</span>
       <span class="pick">Edit #${b.edit} in <code>${esc(b.editFile)}</code></span>
       <span class="why">That's who last touched the line. Undo it and the test still fails.${otherLine ? ` Line ${b.line} is in the final file; edit #${b.edit} starts at line ${b.editLine} of the file as it was then.` : ""}</span></div>
-    <div><span class="who2">whyagent says</span><span class="mark yes">proven</span>
+    <div><span class="who2">agentwhy says</span><span class="mark yes">proven</span>
       <span class="pick">Edit #${r.cause.edit} in <code>${esc(r.cause.file)}</code></span>
       <span class="why">Undo only this edit and the test passes.</span></div>`;
 }
@@ -580,7 +627,7 @@ function renderGraph() {
   const code = REPORT.stops.filter((s) => s.kind === "code");
   const node = (x, y, w, rows, opts = {}) => {
     const h = 14 + rows.length * 22;
-    const fill = opts.hi ? "var(--hi)" : "#ffffff", stroke = opts.dim ? "var(--line-2)" : "var(--ink)";
+    const fill = opts.hi ? "var(--hi)" : "var(--paper)", stroke = opts.dim ? "var(--line-2)" : "var(--ink)";
     return `<g><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>` +
       rows.map(([k, v, col], i) => `<text x="${x + 12}" y="${y + 25 + i * 22}"><tspan class="k">${esc(k)}: </tspan><tspan ${col ? `style="fill:${col};font-weight:600"` : ""}>${esc(v)}</tspan></text>`).join("") + "</g>";
   };
