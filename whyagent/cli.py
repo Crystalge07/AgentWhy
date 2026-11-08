@@ -129,20 +129,23 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"lesson: Brain lookup failed ({e}), writing a new one")
     if getattr(args, "lesson", None):
         lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip Gemini
-    if not lesson and not os.environ.get("GEMINI_API_KEY"):
-        print("lesson: skipped, GEMINI_API_KEY isn't set (pass --lesson TEXT to test a lesson without Gemini)")
-        report.note("Lesson skipped: no GEMINI_API_KEY and no --lesson.")
-        return 0 if args.no_rerun else 1
     if not lesson:
+        from .rerun.lesson import write_lesson
+
         try:
-            lesson = make_lesson(rc)
-        except Exception as e:
-            msg = str(e).split(". {")[0][:200]
-            print(f"lesson: Gemini failed ({type(e).__name__}: {msg})")
+            lesson, source, tried = write_lesson(rc)  # Gemini first, Claude if Gemini can't
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)[:300]
+            print(f"lesson: no provider could write it ({msg})")
             report.note(f"Lesson generation failed: {msg}")
             return 0 if args.no_rerun else 1  # the root cause is proven either way; only reruns need a lesson
+        for t in tried:
+            print(f"lesson: {t} → writing it with Claude")
+            report.note(f"Lesson: {t}; Claude wrote it instead.")
     hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
-    print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)"}.get(source, "") + hidden)
+    print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)",
+                                   "claude": " (written by Claude)", "gemini": " (written by Gemini)"}.get(source, "")
+          + hidden)
     report["lesson"] = {"text": lesson, "source": source}
     if args.no_rerun:
         return 0
@@ -150,7 +153,13 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     # Stage 8 — same agent both arms, N runs each
     if args.sandbox != "docker":
         report.note("Reruns ran without Docker: the agent had full access to the host.")
-    agent = agent_by_name(args.rerun_agent)
+    from . import providers
+
+    agent_name, fell_back = providers.pick_rerun_agent(args.rerun_agent)  # auto: Gemini CLI, else Claude Code
+    if fell_back:
+        print(f"rerun: {fell_back} → Claude Code reruns")
+        report.note(f"Reruns: {fell_back}; Claude Code ran them instead.")
+    agent = agent_by_name(agent_name)
     missing = agent.missing_auth()
     if missing:
         print(f"rerun: skipped, {missing}")
@@ -165,6 +174,15 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
         print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
     a_all, b_all = rr.run(rc, lesson, args.runs)
+    if (args.rerun_agent == "auto" and agent.name == "gemini-cli" and rr._abort
+            and providers.claude_configured()):
+        # Gemini CLI hit quota/auth mid-run. Both arms must use the same agent, so redo all of Stage 8.
+        providers.mark_gemini_down(rr._abort)
+        print(f"rerun: Gemini CLI failed ({rr._abort[:120]}) → rerunning both arms with Claude Code")
+        report.note(f"Reruns: Gemini CLI failed ({rr._abort[:200]}); both arms reran with Claude Code.")
+        agent = agent_by_name("claude-code")
+        rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
+        a_all, b_all = rr.run(rc, lesson, args.runs)
     if rr.excluded:
         print(f"rerun: {len(rr.excluded)} test(s) added by the session aren't required of reruns")
         report.note("Reruns weren't required to pass these tests, which pass at the guilty commit but not before "
@@ -513,9 +531,10 @@ def main(argv=None) -> int:
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
-    p.add_argument("--rerun-agent", default="gemini-cli", choices=["gemini-cli", "claude-code", "stub"],
-                   help="agent for counterfactual reruns (default gemini-cli; claude-code needs ANTHROPIC_API_KEY; "
-                        "stub runs $WHYAGENT_STUB_CMD, no model, for rehearsing Stage 8)")
+    p.add_argument("--rerun-agent", default="auto", choices=["auto", "gemini-cli", "claude-code", "stub"],
+                   help="agent for counterfactual reruns (default auto: Gemini CLI, or Claude Code if Gemini is "
+                        "unavailable or runs out of quota; claude-code needs CLAUDE_CODE_OAUTH_TOKEN or "
+                        "ANTHROPIC_API_KEY; stub runs $WHYAGENT_STUB_CMD, no model, for rehearsing Stage 8)")
     p.add_argument("--target-runs", type=int, help="runs of the target test per rerun (default: the precheck's runs "
                                                     "per state, so flaky bugs need to stay fixed; 1 with --root-cause)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")

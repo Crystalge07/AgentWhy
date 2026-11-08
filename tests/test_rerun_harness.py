@@ -298,13 +298,19 @@ def test_stages_7_8_without_any_keys(monkeypatch):
     from whyagent import cli, entire
     from whyagent.report import Report
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    from whyagent import providers
+
+    for k in ("GEMINI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    providers.reset()
     monkeypatch.setattr(entire, "brain_lookup", lambda *a: None)
-    monkeypatch.setattr("whyagent.rerun.make_lesson", lambda rc: pytest.fail("called Gemini"))
+    monkeypatch.setattr("whyagent.rerun.lesson.gemini_generate", lambda p: pytest.fail("called Gemini"))
     rep = Report()
     args = Namespace(lesson=None, no_rerun=True, sandbox="docker", rerun_agent="gemini-cli", runs=5, workers=1)
     assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 0
-    assert any("Lesson skipped" in n for n in rep.get("notes", []))
+    # no Gemini key -> Claude fallback, which has no credentials either: no API call, a clear note
+    assert any("Lesson generation failed" in n and "GEMINI_API_KEY" in n and "CLAUDE_CODE_OAUTH_TOKEN" in n
+               for n in rep.get("notes", []))
     args = Namespace(lesson="Do X.", no_rerun=False, sandbox="docker", rerun_agent="gemini-cli", runs=5, workers=1)
     rep = Report()
     assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 1

@@ -1,4 +1,4 @@
-"""Stage 7: turn the guilty step into a one-sentence, imperative lesson (Gemini)."""
+"""Stage 7: turn the guilty step into a one-sentence, imperative lesson (Gemini, Claude as fallback)."""
 from __future__ import annotations
 
 import os
@@ -83,3 +83,17 @@ def make_lesson(rc: RootCause | Step, generate: Callable[[str], str] = gemini_ge
     """Write the lesson. `generate` is injectable so tests don't call the API."""
     step, failing = (rc.step, rc.failing_output) if isinstance(rc, RootCause) else (rc, "")
     return _clean(generate(build_prompt(step, failing)))
+
+
+def write_lesson(rc: RootCause | Step, **providers_kw) -> tuple[str, str, list[str]]:
+    """Stage 7 with provider fallback: (lesson, provider, why Gemini was skipped). Gemini first, then Claude."""
+    from .. import providers
+
+    used: dict = {}
+
+    def gen(prompt: str) -> str:
+        text, used["provider"], used["tried"] = providers.generate(prompt, **providers_kw)
+        return text
+
+    lesson = make_lesson(rc, generate=gen)
+    return lesson, used["provider"], used["tried"]

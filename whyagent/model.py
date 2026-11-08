@@ -39,22 +39,36 @@ class Model:
 
 
 class GeminiModel(Model):
+    """Gemini first, Claude if Gemini is unavailable or fails (see whyagent/providers.py)."""
     name = "gemini"
 
-    def __init__(self, rerun_agent: str = "gemini-cli"):
+    def __init__(self, rerun_agent: str = "auto"):
         self.rerun_agent = rerun_agent
+        self.provider: str | None = None  # who actually wrote the rule: "gemini" or "claude"
 
     def missing_auth(self) -> str | None:
-        if not os.environ.get("GEMINI_API_KEY"):
-            return "GEMINI_API_KEY isn't set (use --model mock or WHYAGENT_MODEL=mock to run on canned responses)"
-        return agent_by_name(self.rerun_agent).missing_auth()
+        from . import providers
+
+        if not (providers.gemini_configured() or providers.claude_configured()):
+            return ("neither GEMINI_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY is set "
+                    "(use --model mock or WHYAGENT_MODEL=mock to run on canned responses)")
+        return agent_by_name(self._agent_name()).missing_auth()
 
     def generate(self, prompt: str) -> str:
-        from .rerun.lesson import gemini_generate
-        return gemini_generate(prompt)
+        from . import providers
+
+        text, self.provider, tried = providers.generate(prompt)
+        for t in tried:
+            print(f"model: {t} → Claude", file=sys.stderr)
+        return text
+
+    def _agent_name(self) -> str:
+        from . import providers
+
+        return providers.pick_rerun_agent(self.rerun_agent)[0]
 
     def agent(self, rule: str | None = None) -> Agent:
-        return agent_by_name(self.rerun_agent, context_file=AGENT_INSTRUCTIONS)
+        return agent_by_name(self._agent_name(), context_file=AGENT_INSTRUCTIONS)
 
 
 class MockAgent(Agent):
@@ -107,7 +121,7 @@ class MockModel(Model):
                          env={"WHYAGENT_MOCK": json.dumps(cfg), "WHYAGENT_MOCK_AGENT": src})
 
 
-def make_model(name: str | None, rerun_agent: str = "gemini-cli", local: bool = False) -> Model:
+def make_model(name: str | None, rerun_agent: str = "auto", local: bool = False) -> Model:
     name = (name or os.environ.get("WHYAGENT_MODEL") or "gemini").strip().lower()
     if name == "mock":
         return MockModel(local=local)
