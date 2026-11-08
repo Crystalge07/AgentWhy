@@ -23,6 +23,12 @@
    python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
    # also clone the seeded demo repo, install the Entire CLI, and set GEMINI_API_KEY / TIGER_DATABASE_URL
    ```
+   **Auto-sync your code to the VM** (Mac, Linux or Windows; needs your SSH key on the VM). One time per machine, from the repo root:
+   ```sh
+   .venv/bin/python scripts/sync_vm.py --install-hook root@<VM-IP>            # Mac/Linux
+   .venv\Scripts\python scripts\sync_vm.py --install-hook root@<VM-IP>        # Windows
+   ```
+   After that, every `git commit` copies tracked files to `/root/hacktrent/agentwhy` and reinstalls them in the background. The VM's `.env` and `.venv` are left alone. The log is `.git/whyagent-vm-sync.log`. Run `scripts/sync_vm.py` to sync by hand, or `git config whyagent.vmSync false` to turn it off.
 7. **Stop billing** when idle: power off doesn't stop charges — snapshot and destroy between sessions, or just watch the credit balance.
 
 ## Tiger Data — run log + chart
