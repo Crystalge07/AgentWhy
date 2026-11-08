@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent · Entire</title>
+<link rel="stylesheet" href="/site.css">
+<style>
+  .evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); background: var(--paper); margin-top: 18px; }
+  .evidence > div { padding: 18px 22px; border-left: 1px solid var(--line); min-width: 0; }
+  .evidence > div:first-child { border-left: 0; }
+  .evidence .k { font-size: 14px; color: var(--muted); margin-bottom: 6px; }
+  .evidence p { margin: 0; color: var(--ink); }
+  .evidence .wide { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+  .diff { font: 13px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; margin: 0; }
+  .diff .del { background: var(--fail-bg); color: var(--fail); display: block; }
+  .diff .add { background: var(--pass-bg); color: var(--pass); display: block; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 24px; font: 13px var(--mono); color: var(--muted); }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+  @media (max-width: 900px) { .evidence { grid-template-columns: 1fr; } .evidence > div { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+</head>
+<body class="sponsor">
+<!--site-bar-->
+<main>
+  <div>
+    <h1>Entire is where the evidence comes from</h1>
+    <p class="lede">git blame can tell you who changed a line. Only the agent's recorded session can tell you <em>why</em>.
+      Entire records every coding-agent session and links it to the commit it produced, and that recording is whyagent's input:
+      without it there are no edits to search, no reasoning to show, and nothing to learn from.</p>
+  </div>
+
+  <section class="card">
+    <h2>Where Entire is used in the pipeline</h2>
+    <div class="sub">Five of the twelve steps in the pipeline view depend on what Entire recorded, and the answer goes back to it.</div>
+    <ol class="steps three">
+      <li><i>Find the commit</i><b>Read the checkpoint trailer</b><span>Every commit made in a recorded session carries an <code>Entire-Checkpoint</code> trailer. No trailer means a person wrote it, and whyagent stops there.</span></li>
+      <li><i>Entire: open the session</i><b>Load the transcript</b><span>The session behind that checkpoint: the task the agent was given, every edit, every command, what it was thinking and what it saw on screen.</span></li>
+      <li><i>Rebuild the agent's work</i><b>Turn it into replayable edits</b><span>One commit becomes an ordered list of edits, including ones made with shell commands, and replaying them must rebuild the commit exactly.</span></li>
+      <li><i>Search the edits</i><b>Bisect inside the commit</b><span>git bisect stops at a commit. With Entire's edits we keep going, down to the single edit that broke the test.</span></li>
+      <li><i>Prove it</i><b>Show the reasoning</b><span>The proven edit comes with the agent's own words and the error it was reacting to, straight from the transcript.</span></li>
+      <li><i>Answer</i><b>Post back to the trail</b><span>With <code>--trail</code>, the root cause, proof and lesson are posted as a finding on the branch's Entire trail, with the revert as a suggested patch.</span></li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>From the latest analysis</h2>
+    <div class="sub">What Entire's recording gave whyagent on the newest finished analysis in this repo.</div>
+    <div id="latest"><p class="sub" style="margin-top:14px">Loading…</p></div>
+  </section>
+
+  <section class="card">
+    <h2>Without Entire</h2>
+    <div class="without">
+      <b>An agent's commit stays a black box.</b>
+      <p>git bisect would point at "the agent's commit" and stop. A commit with nine edits across four files would still need a person to read
+        all of it, git blame would point at whichever edit last touched the failing line (often the wrong one), and there would be no reasoning
+        to turn into a lesson for the next agent.</p>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const diff = (a, b) => `<pre class="diff">${(a || "").split("\n").map(l => `<span class="del">- ${esc(l)}</span>`).join("")}${(b || "").split("\n").map(l => `<span class="add">+ ${esc(l)}</span>`).join("")}</pre>`;
+fetch("/api/latest").then(r => r.json()).then(d => {
+  if (d.error) { $("#latest").innerHTML = `<p class="sub" style="margin-top:14px">${esc(d.error)}</p>`; return; }
+  const c = d.culprit;
+  $("#latest").innerHTML = `
+    <div class="meta" style="margin-top:14px"><span>repo <b>${esc(d.repo)}</b></span><span>commit <b>${esc(d.commit)}</b></span>
+      <span>checkpoint <b>${esc(d.checkpoint || "none")}</b></span><span>agent <b>${esc(d.agent)}</b></span>
+      <span><a href="/a/${encodeURIComponent(d.id)}">full report</a></span></div>
+    <div class="tiles" style="margin-top:14px">
+      <div class="tile"><div class="v">${d.edits}</div><div class="k">edits recovered from one commit</div></div>
+      <div class="tile"><div class="v">${d.with_reasoning}</div><div class="k">with the agent's reasoning</div></div>
+      <div class="tile"><div class="v">${d.with_trigger}</div><div class="k">with the error it was reacting to</div></div>
+      <div class="tile"><div class="v">Edit ${esc(c.edit)}</div><div class="k">proven cause, in <code>${esc((c.file || "").split("/").pop())}</code></div></div>
+    </div>
+    <div class="evidence">
+      <div class="wide" style="border-top:0"><div class="k">What the agent was asked to do</div><p>${esc(d.prompt)}</p></div>
+      <div class="wide"><div class="k">Edit ${esc(c.edit)}: the change that broke the test (<code>${esc(c.file)}${c.line ? ":" + esc(c.line) : ""}</code>)</div>${diff(c.old, c.new)}</div>
+      <div style="border-top:1px solid var(--line)"><div class="k">What the agent was thinking</div><p>${esc(c.reasoning || "Not recorded for this edit.")}</p></div>
+      <div style="border-top:1px solid var(--line)"><div class="k">What it was reacting to</div><p>${esc(c.trigger || "Not recorded for this edit.")}</p></div>
+    </div>`;
+}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+</script>
+</body>
+</html>
