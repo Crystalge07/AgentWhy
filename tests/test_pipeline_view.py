@@ -113,3 +113,16 @@ def test_host_label(tmp_path, monkeypatch):
     assert host_label(str(tmp_path / "missing")) != "Vultr VM"
     monkeypatch.setenv("WHYAGENT_HOST", "Crystal's Mac")
     assert host_label(str(vendor)) == "Crystal's Mac"
+
+
+def test_speed_compare_pairs_the_same_bug_across_hosts():
+    from whyagent.dashboards import speed_compare
+    row = lambda label, host, wall, ms, runs=10: {"label": label, "host": host, "wall_s": wall, "ms_per_run": ms,
+                                                   "test_runs": runs, "workers": 8}
+    t = "tests/t.py::test_x"
+    rows = [row(f"demo: pytest {t}", "Laptop (Windows)", 300.0, 3000.0),
+            row(f"demo: python -m pytest -q {t}", "Vultr VM", 60.0, 1500.0),
+            row("demo: pytest tests/t.py::test_only_on_vm", "Vultr VM", 10.0, 900.0)]  # nothing to compare it with
+    [c] = speed_compare(rows)
+    assert c["bug"] == "test_x" and c["speedup"] == 5.0 and c["per_run_speedup"] == 2.0
+    assert c["laptop"]["host"] == "Laptop (Windows)" and c["vm"]["host"] == "Vultr VM"

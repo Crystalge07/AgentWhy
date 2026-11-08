@@ -32,6 +32,7 @@
   .title { font-size: 18px; color: var(--ink-2); }
   .title b { color: var(--ink); font-weight: 600; }
   .top .sp { flex: 1; }
+  .links { display: flex; gap: 4px; } .links a { color: var(--muted); text-decoration: none; font-weight: 600; font-size: 15px; padding: 6px 10px; border-radius: 8px; } .links a:hover { color: var(--ink); background: var(--node); }
   .ctl { display: flex; gap: 4px; background: var(--node); border: 1px solid var(--edge); border-radius: 10px; padding: 4px; }
   .ctl button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 15px; color: var(--ink-2); }
   .ctl button.on { background: var(--brand); color: #fff; }
@@ -193,6 +194,7 @@
   <span class="logo">why<i>agent</i></span>
   <span class="title" id="title"></span>
   <span class="sp"></span>
+  <nav class="links"><a href="/tiger">Tiger Data</a><a href="/vultr">Vultr</a></nav>
   <span class="ctl hidden" id="ctl">
     <button id="pause" class="on" title="Space">Play</button>
     <button id="next" title="N or →">Next step</button>
