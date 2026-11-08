@@ -147,7 +147,14 @@
     </section>
     <section class="row sec">
       <header><span class="n">01</span><h2>Stages</h2><p>Each stage proves one fact with real test runs. This page follows along as they finish.</p></header>
-      <div class="scroll" style="margin:0"><table class="stages" id="lStages"></table></div>
+      <div>
+        <p class="muted" style="font-size:13px;margin-bottom:10px;display:flex;gap:18px;flex-wrap:wrap">
+          <span><span class="runs"><i></i></span> passed</span>
+          <span><span class="runs"><i class="f"></i></span> failed like HEAD (reruns: agent's fix didn't work)</span>
+          <span><span class="runs"><i class="o"></i></span> other: crash, timeout, API error (never counts)</span>
+        </p>
+        <div class="scroll" style="margin:0"><table class="stages" id="lStages"></table></div>
+      </div>
     </section>
     <section class="row sec">
       <header><span class="n">02</span><h2>Output</h2><p>What whyagent is printing, as it prints it.</p></header>
