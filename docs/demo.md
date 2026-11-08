@@ -218,25 +218,25 @@ What's canned and what's real, so we can say it on stage:
 - The 2b session was steered ("don't add constructor arguments, change the defaults in config.py"), and the
   rerun prompt is that same instruction. A real agent would get a rule that contradicts its task; disclose this.
 
-## Pipeline view (live, for judges)
+## Pipeline view (for judges)
 
-`whyagent --serve` also serves **`/live`**: one analysis drawn stage by stage as it runs. The commit search is a
-row of dots, the agent's edits are numbered cards, every test run is a tile (PASS / TARGET_FAIL / OTHER, run
-time; parallel runs side by side), and the blame hint's "NOT the cause" moment gets its own panel.
+`whyagent --serve` also serves **`/live`**: an n8n-style workflow canvas that draws one analysis as it runs, in
+plain words (no hashes, commands or ids). Each stage is a node that lights up, works, and gets a check mark;
+whenever a stage runs tests, a branch of sandbox nodes (one per `--workers`) fans out under it and each shows
+what it's testing and the result. The panel below the canvas explains the current stage: the agent's edits as
+cards, the blame hint's "not the cause" moment, the search narrowing, the lesson, the reruns.
 
 ```sh
 cd payments-demo && whyagent --serve            # terminal 1: http://127.0.0.1:8700/live
 git checkout scenario-2b-clean                   # terminal 2: start the run; /live jumps to it
-whyagent --good f39623e --line payments/client.py:39 --workers 4 \
-  --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
+whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
 
-- **Live** (`/live/<id>`): Server-Sent Events from the run's `events.jsonl`. The badge says LIVE; a run that had
-  already finished when the page opened says "FINISHED RUN · not live".
-- **Replay** (`/live/<id>?replay=1`): the same page played back from the saved `events.jsonl`, with real gaps
-  (capped at 3 s) and a short pause after each result; pause, restart and ½×–4× speed. The badge says
-  "REPLAY of a recorded run · recorded <time>". Fallback for bad Wi-Fi, a down VM or no model quota.
-- **On the Vultr VM**: the server listens on 127.0.0.1 only. Run `whyagent --serve` on the VM and tunnel it:
+- `/live/<id>` follows a run as it happens (Server-Sent Events from its `events.jsonl`).
+- `/live/<id>?replay=1` plays a finished run back from its saved events (gaps capped at 3 s, a beat after each
+  result; pause, restart, 1×/2×/4×, Space and R keys). Fallback for bad Wi-Fi, a down VM or no model quota.
+  If you show a replay to judges, say it's a recorded run.
+- On the Vultr VM the server listens on 127.0.0.1 only: run `whyagent --serve` there and tunnel it with
   `ssh -L 8700:127.0.0.1:8700 root@<vm-ip>`, then open http://127.0.0.1:8700/live on the laptop.
 - Events come from `events.stage()` / `events.emit()` calls in the pipeline (no log scraping); they're a
   no-op unless an analysis turned them on, so library use and tests are unaffected.
