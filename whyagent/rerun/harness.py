@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -122,12 +123,15 @@ class ClaudeCode(Agent):
     """PRD backup rerun agent: Claude Code headless. Needs ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN from
     `claude setup-token` to run on a Claude subscription (the container has no interactive login)."""
 
-    def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "2.1.310"):
+    def __init__(self, max_turns: int = 15, model: str | None = None, version: str = "2.1.310",
+                 context_file: str | None = None):
         model = model or os.environ.get("WHYAGENT_CLAUDE_MODEL")
+        # Claude Code reads CLAUDE.md, not AGENTS.md: pass the instructions file in as an appended system prompt.
+        extra = f' --append-system-prompt "$(cat {shlex.quote(context_file)} 2>/dev/null)"' if context_file else ""
         super().__init__(
             name="claude-code",
             command=(f'claude -p "$WHYAGENT_PROMPT" --output-format json --max-turns {max_turns}'
-                     " --dangerously-skip-permissions" + (f" --model {model}" if model else "")),
+                     " --dangerously-skip-permissions" + (f" --model {model}" if model else "") + extra),
             image_lines=_NODE_LINES[:-1] + [
                 _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@{version}"],
             env={**{k: os.environ[k] for k in _CLAUDE_AUTH if os.environ.get(k)},  # an empty key would shadow the other
@@ -382,7 +386,7 @@ def agent_by_name(name: str, context_file: str | None = None) -> Agent:
     if name == "gemini-cli":
         return GeminiCLI(context_file=context_file)
     if name == "claude-code":
-        return ClaudeCode()
+        return ClaudeCode(context_file=context_file)
     if name == "stub":
         return Stub()
     raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code, stub)")

@@ -1,8 +1,12 @@
-"""Stage 7: turn the guilty step into a one-sentence, imperative lesson (Gemini, Claude as fallback)."""
+"""Stage 7: turn the guilty step into a one-sentence, imperative lesson (Gemini first, Claude via `claude -p`)."""
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 from typing import Callable
 
@@ -77,6 +81,56 @@ def gemini_generate(prompt: str, model: str | None = None) -> str:
                 raise
             time.sleep(2 * 2 ** attempt)
     return ""
+
+
+CLAUDE_AUTH = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+
+def claude_missing() -> str | None:
+    """Why claude_generate can't run, or None. A token is required on purpose: without one, `claude` would fall
+    back to whichever account the host's default config is logged into."""
+    if not shutil.which("claude"):
+        return "the `claude` CLI isn't on PATH (npm install -g @anthropic-ai/claude-code)"
+    if not any(os.environ.get(k) for k in CLAUDE_AUTH):
+        return "set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY"
+    return None
+
+
+def claude_generate(prompt: str, model: str | None = None, timeout: int = 180) -> str:
+    """One headless Claude Code turn (`claude -p`), no tools. Auth: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
+    Model: WHYAGENT_CLAUDE_MODEL (e.g. haiku), else the account default."""
+    missing = claude_missing()
+    if missing:
+        raise RuntimeError(missing)
+    model = model or os.environ.get("WHYAGENT_CLAUDE_MODEL")
+    cmd = [shutil.which("claude") or "claude", "-p", "--output-format", "json", "--max-turns", "1", "--tools", ""]
+    if model:
+        cmd += ["--model", model]
+    env = {k: v for k, v in os.environ.items() if not (k in CLAUDE_AUTH and not v)}  # an empty key shadows the other
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+    # An empty cwd: no CLAUDE.md, no project hooks (so Entire doesn't record this call as a session).
+    with tempfile.TemporaryDirectory(prefix="whyagent-lesson-") as cwd:
+        p = subprocess.run(cmd, input=prompt, cwd=cwd, env=env, capture_output=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
+    out = (p.stdout or "").strip()
+    try:
+        data = json.loads(out[out.find("{"):]) if "{" in out else {}
+    except ValueError:
+        data = {}
+    if p.returncode != 0 or data.get("is_error") or not data.get("result"):
+        why = data.get("result") or data.get("subtype") or (p.stderr or out).strip()[-300:] or f"exit {p.returncode}"
+        raise RuntimeError(f"claude -p failed: {why}")
+    return data["result"]
+
+
+GENERATORS: dict[str, Callable[[str], str]] = {"gemini": gemini_generate, "claude": claude_generate}
+
+
+def generator_missing(name: str) -> str | None:
+    """Why the named lesson writer can't run (no key / no CLI), or None."""
+    if name == "claude":
+        return claude_missing()
+    return None if os.environ.get("GEMINI_API_KEY") else "GEMINI_API_KEY isn't set"
 
 
 def make_lesson(rc: RootCause | Step, generate: Callable[[str], str] = gemini_generate) -> str:

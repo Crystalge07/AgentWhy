@@ -315,3 +315,56 @@ def test_stages_7_8_without_any_keys(monkeypatch):
     rep = Report()
     assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 1
     assert rep["rerun"]["verdict"] == "INCONCLUSIVE"
+
+
+def test_claude_generate(monkeypatch):
+    """claude -p: prompt on stdin, no tools, WHYAGENT_CLAUDE_MODEL, empty cwd; errors raise; needs a token."""
+    from whyagent.rerun import lesson as L
+
+    monkeypatch.setattr(L.shutil, "which", lambda name: "/bin/claude")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in L.claude_missing()
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # empty: must not shadow the token
+    monkeypatch.setenv("WHYAGENT_CLAUDE_MODEL", "haiku")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(cmd=cmd, **kw)
+        return subprocess.CompletedProcess(cmd, 0, '{"is_error": false, "result": "Lesson: Keep TLS on."}', "")
+    monkeypatch.setattr(L.subprocess, "run", fake_run)
+    assert make_lesson(_rc("abc"), L.claude_generate) == "Keep TLS on."
+    assert seen["cmd"][:2] == ["/bin/claude", "-p"] and seen["cmd"][-2:] == ["--model", "haiku"]
+    assert "--tools" in seen["cmd"] and "VERIFY = False" in seen["input"]
+    assert "ANTHROPIC_API_KEY" not in seen["env"] and seen["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"
+    assert seen["encoding"] == "utf-8"
+
+    monkeypatch.setattr(L.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 1, '{"is_error": true, "result": "Invalid API key"}', ""))
+    with pytest.raises(RuntimeError, match="Invalid API key"):
+        L.claude_generate("x")
+
+
+def test_stage_7_uses_claude_with_model_claude(monkeypatch):
+    from argparse import Namespace
+
+    from whyagent import cli, entire
+    from whyagent.report import Report
+    from whyagent.rerun import lesson as L
+
+    monkeypatch.setattr(entire, "brain_lookup", lambda *a: None)
+    monkeypatch.setattr(L, "claude_missing", lambda: None)
+    monkeypatch.setitem(L.GENERATORS, "claude", lambda prompt: "Never disable TLS verification.")
+    rep = Report()
+    args = Namespace(lesson=None, no_rerun=True, sandbox="docker", rerun_agent="claude-code", runs=5, workers=1,
+                     model="claude")
+    assert cli.stages_7_8(_rc("abc"), None, args, rep, None) == 0
+    assert rep["lesson"] == {"text": "Never disable TLS verification.", "source": "claude"}
+
+
+def test_claude_code_agent_reads_instructions_file():
+    from whyagent.rerun import agent_by_name
+
+    assert "--append-system-prompt" not in agent_by_name("claude-code").command
+    assert "$(cat AGENTS.md" in agent_by_name("claude-code", context_file="AGENTS.md").command

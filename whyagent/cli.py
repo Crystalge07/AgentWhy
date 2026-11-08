@@ -117,10 +117,15 @@ def _make_sandbox(args, head: str):
 
 def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     """Stage 7 (lesson) and Stage 8 (counterfactual reruns). rp must know rc's steps."""
+    from .model import model_name
     from .rerun import Reruns, agent_by_name, decide, make_lesson
+    from .rerun.lesson import GENERATORS, generator_missing
 
-    # Stage 7 — Brain first, then Gemini
-    lesson, source = None, "gemini"
+    # Stage 7 — Brain first, then the --model writer (Gemini or Claude)
+    writer = model_name(getattr(args, "model", None))
+    writer = writer if writer in GENERATORS else "gemini"
+    label = {"gemini": "Gemini", "claude": "Claude"}[writer]
+    lesson, source = None, writer
     try:
         hit = entire.brain_lookup([rc.step.file], rc.failing_output)  # a validated lesson record, or None
         if hit:
@@ -128,15 +133,24 @@ def stages_7_8(rc: RootCause, rp, args, report: Report, runlog) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"lesson: Brain lookup failed ({e}), writing a new one")
     if getattr(args, "lesson", None):
-        lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip Gemini
+        lesson, source = args.lesson.strip(), "given"  # --lesson: test a hand-written lesson, skip the model
+    # --model gemini (default) falls back to Claude on its own; an explicit --model claude needs Claude set up
+    missing = None if lesson or writer == "gemini" else generator_missing(writer)
+    if missing:
+        print(f"lesson: skipped, {missing} (pass --lesson TEXT to test a lesson without {label})")
+        report.note(f"Lesson skipped: {missing} and no --lesson.")
+        return 0 if args.no_rerun else 1
     if not lesson:
         from .rerun.lesson import write_lesson
 
         try:
-            lesson, source, tried = write_lesson(rc)  # Gemini first, Claude if Gemini can't
+            if writer == "gemini":
+                lesson, source, tried = write_lesson(rc)  # Gemini first, Claude if Gemini can't
+            else:
+                lesson, tried = make_lesson(rc, GENERATORS[writer]), []
         except Exception as e:  # noqa: BLE001
-            msg = str(e)[:300]
-            print(f"lesson: no provider could write it ({msg})")
+            msg = str(e).split(". {")[0][:300]
+            print(f"lesson: {'no provider could write it' if writer == 'gemini' else label + ' failed'} ({msg})")
             report.note(f"Lesson generation failed: {msg}")
             return 0 if args.no_rerun else 1  # the root cause is proven either way; only reruns need a lesson
         for t in tried:
@@ -531,17 +545,18 @@ def main(argv=None) -> int:
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
-    p.add_argument("--rerun-agent", default="auto", choices=["auto", "gemini-cli", "claude-code", "stub"],
-                   help="agent for counterfactual reruns (default auto: Gemini CLI, or Claude Code if Gemini is "
-                        "unavailable or runs out of quota; claude-code needs CLAUDE_CODE_OAUTH_TOKEN or "
-                        "ANTHROPIC_API_KEY; stub runs $WHYAGENT_STUB_CMD, no model, for rehearsing Stage 8)")
+    p.add_argument("--rerun-agent", choices=["auto", "gemini-cli", "claude-code", "stub"],
+                   help="agent for counterfactual reruns (default: auto with --model gemini, i.e. Gemini CLI, or "
+                        "Claude Code if Gemini is unavailable or runs out of quota; claude-code with --model claude. "
+                        "claude-code needs CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` or ANTHROPIC_API_KEY; "
+                        "stub runs $WHYAGENT_STUB_CMD, no model, for rehearsing Stage 8)")
     p.add_argument("--target-runs", type=int, help="runs of the target test per rerun (default: the precheck's runs "
                                                     "per state, so flaky bugs need to stay fixed; 1 with --root-cause)")
     p.add_argument("--workers", type=int, default=2, help="sandboxes in parallel, for test runs and reruns (default 2; 4+ on a Vultr VM)")
     p.add_argument("--chart", action="store_true", help="write the Tiger Data pruning chart (.whyagent/chart.html)")
     p.add_argument("--trail", action="store_true",
                    help="post the root cause as a finding on this branch's Entire trail, with the revert as a suggested patch")
-    p.add_argument("--lesson", help="test this lesson in the reruns instead of writing one with Gemini (Stage 7)")
+    p.add_argument("--lesson", help="test this lesson in the reruns instead of writing one with --model (Stage 7)")
     p.add_argument("--root-cause", metavar="JSON", help="dev: run stages 7-8 from a hard-coded RootCause fixture")
     p.add_argument("--live", action="store_true",
                    help="after the root cause: write a rule from the reruns, approve it, add it to --instructions, "
@@ -549,16 +564,19 @@ def main(argv=None) -> int:
     p.add_argument("--yes", action="store_true", help="--live: approve the rule without asking")
     p.add_argument("--instructions", default="AGENTS.md",
                    help="--live: the agent instructions file the rule is added to (default AGENTS.md)")
-    p.add_argument("--model", choices=["gemini", "mock"],
-                   help="--live: model for the rule and the rerun agent (default $WHYAGENT_MODEL, else gemini; "
-                        "mock = canned responses for the seeded demo repo)")
+    p.add_argument("--model", choices=["gemini", "claude", "mock"],
+                   help="who writes the lesson (Stage 7) or, with --live, the rule (default $WHYAGENT_MODEL, else "
+                        "gemini). claude = `claude -p` with CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, model "
+                        "$WHYAGENT_CLAUDE_MODEL (e.g. haiku); mock = canned responses for the seeded demo repo, --live only")
     args = p.parse_args(argv)
     import shlex
     args.command = "whyagent " + shlex.join(sys.argv[1:] if argv is None else argv)  # shown on the report
     if args.live and (args.trail or args.lesson or args.no_rerun):
         p.error("--live can't be combined with --trail, --lesson or --no-rerun")
-    if (args.yes or args.model) and not args.live:
-        p.error("--yes and --model only apply to --live")
+    if (args.yes or args.model == "mock") and not args.live:
+        p.error("--yes and --model mock only apply to --live")
+    from .model import DEFAULT_AGENT, model_name
+    args.rerun_agent = args.rerun_agent or DEFAULT_AGENT.get(model_name(args.model), "gemini-cli")
     if args.check_entire:
         return cmd_check_entire(args)
     if args.render:

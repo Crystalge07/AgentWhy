@@ -9,11 +9,7 @@ returned so reports and Tiger say which one did the work.
 """
 from __future__ import annotations
 
-import json
 import os
-import shutil
-import subprocess
-import tempfile
 
 GEMINI, CLAUDE = "gemini", "claude"
 _gemini_down: str | None = None  # why Gemini failed earlier in this process (skip it from then on)
@@ -52,34 +48,6 @@ def _short(e: Exception) -> str:
     return f"{type(e).__name__}: {str(e).split('. {')[0][:160]}"
 
 
-def claude_generate(prompt: str, model: str | None = None, timeout: int = 180) -> str:
-    """One-shot text from Claude via the Claude Code CLI (`claude -p`), using the subscription token.
-
-    Runs in a throwaway directory, outside any repo: no project settings or CLAUDE.md, and no
-    Entire hooks, so these calls are never recorded as agent sessions.
-    """
-    exe = shutil.which("claude")
-    if not exe:
-        raise ProviderError("the `claude` CLI isn't installed (needed for the Claude fallback)")
-    if not claude_configured():
-        raise ProviderError("set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY")
-    args = [exe, "-p", "--output-format", "json", "--max-turns", "1"]
-    model = model or os.environ.get("WHYAGENT_CLAUDE_MODEL")
-    if model:
-        args += ["--model", model]
-    with tempfile.TemporaryDirectory(prefix="whyagent-claude-") as d:
-        p = subprocess.run(args, input=prompt, cwd=d, capture_output=True, encoding="utf-8", errors="replace",
-                           timeout=timeout)
-    try:
-        data = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
-    except json.JSONDecodeError:
-        data = {}
-    if p.returncode != 0 or data.get("is_error") or not data.get("result"):
-        detail = data.get("result") or (p.stderr or p.stdout).strip()[-300:] or f"exit {p.returncode}"
-        raise ProviderError(f"claude -p failed: {detail}")
-    return data["result"]
-
-
 def generate(prompt: str, gemini=None, claude=None) -> tuple[str, str, list[str]]:
     """(text, provider, fallbacks): Gemini first, then Claude. `fallbacks` says why Gemini was skipped.
 
@@ -87,7 +55,8 @@ def generate(prompt: str, gemini=None, claude=None) -> tuple[str, str, list[str]
     """
     if gemini is None:
         from .rerun.lesson import gemini_generate as gemini
-    claude = claude or claude_generate
+    if claude is None:
+        from .rerun.lesson import claude_generate as claude  # one Claude caller for everyone
     tried: list[str] = []
     why = gemini_status()
     if why is None:

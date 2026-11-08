@@ -57,9 +57,9 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--scan` | Test every prefix instead of bisecting (sessions under 20 edits; finds flip-flops) |
 | `--no-rerun` | Stop after the lesson; skip the counterfactual reruns |
 | `--runs N` | Reruns per arm in Stage 8 (default 5). Below 4 the Fisher test can never reach p < 0.05; at 5, VALIDATED needs a gap of 4 passes (e.g. 0/5 vs 4/5) |
-| `--rerun-agent gemini-cli\|claude-code\|stub` | Agent for the reruns (same agent in both arms). `stub` runs `$WHYAGENT_STUB_CMD` with no model, to rehearse Stage 8. Missing API keys stop Stage 8 before any image is built |
+| `--rerun-agent gemini-cli\|claude-code\|stub` | Agent for the reruns (same agent in both arms). Default `claude-code` with `--model claude`, else `gemini-cli`. `claude-code` takes `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`); `WHYAGENT_CLAUDE_MODEL=haiku` picks the model. `stub` runs `$WHYAGENT_STUB_CMD` with no model, to rehearse Stage 8. Missing API keys stop Stage 8 before any image is built |
 | `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
-| `--lesson TEXT` | Test this lesson instead of asking Gemini to write one (without it and without `GEMINI_API_KEY`, Stage 7 is skipped) |
+| `--lesson TEXT` | Test this lesson instead of asking `--model` to write one (without it and without the model's key, Stage 7 is skipped) |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
@@ -69,7 +69,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--live` | After the root cause, run the live loop instead of stages 7–8 (see below). Works after a full analysis or with `--root-cause` |
 | `--yes` | `--live`: approve the rule without asking (scripted demo runs) |
 | `--instructions PATH` | `--live`: the agent instructions file the rule is added to (default `AGENTS.md`) |
-| `--model gemini\|mock` | `--live`: who writes the rule and reruns the agent. Default `$WHYAGENT_MODEL`, else `gemini`. `mock` = canned responses for the seeded demo repo (scenario 2b), no network |
+| `--model gemini\|claude\|mock` | Who writes the Stage 7 lesson (or, with `--live`, the rule). Default `$WHYAGENT_MODEL`, else `gemini`. `claude` runs `claude -p` with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` and `$WHYAGENT_CLAUDE_MODEL`, and makes `claude-code` the default rerun agent. `mock` = canned responses for the seeded demo repo (scenario 2b), no network, `--live` only |
 
 ## How it works
 
