@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent · Tiger Data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #1e1e22; --dot: #2f2f36; --node: #2c2c33; --node-2: #36363f; --edge: #4b4b55; --panel: #26262c;
+    --ink: #f4f4f6; --ink-2: #c9c9d1; --muted: #8e8e99; --faint: #5d5d68; --brand: #ff6d5a;
+    /* chart series (validated on the dark surface): outcomes, and laptop vs. Vultr */
+    --c-pass: #199e70; --c-fail: #e66767; --c-other: #9085e9; --c-laptop: #d95926; --c-vultr: #3987e5; --c-bar: #3987e5;
+    --sans: "Inter", ui-sans-serif, system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--canvas); background-image: radial-gradient(var(--dot) 1.3px, transparent 1.3px); background-size: 24px 24px;
+         color: var(--ink); font: 17px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 22px; padding: 0 32px; height: 60px; background: #1a1a1ef2; border-bottom: 1px solid var(--node-2); }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -0.03em; text-decoration: none; }
+  .logo i { font-style: normal; color: var(--brand); }
+  .nav { display: flex; gap: 4px; }
+  .nav a { text-decoration: none; color: var(--muted); padding: 6px 12px; border-radius: 8px; font-weight: 600; font-size: 15px; }
+  .nav a[aria-current] { color: var(--ink); background: var(--node-2); }
+  main { max-width: 1240px; margin: 0 auto; padding: 36px 32px 80px; display: flex; flex-direction: column; gap: 28px; }
+  h1 { margin: 0; font-size: 38px; letter-spacing: -0.03em; }
+  h1 span { color: var(--brand); }
+  .lede { color: var(--ink-2); font-size: 20px; max-width: 900px; margin-top: 8px; }
+  h2 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 15px; }
+  .card { background: var(--panel); border: 1px solid var(--node-2); border-radius: 14px; padding: 22px 24px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } main { padding: 24px 16px 60px; } .top { padding: 0 16px; } }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
+  .tile { background: var(--panel); border: 1px solid var(--node-2); border-radius: 14px; padding: 16px 18px; }
+  .tile .v { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .tile .k { font-size: 14px; color: var(--muted); }
+  /* flow diagram, n8n style */
+  .flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; row-gap: 18px; margin-top: 14px; }
+  .fn { display: flex; flex-direction: column; align-items: center; width: 160px; text-align: center; }
+  .fn .t { width: 84px; height: 84px; border-radius: 14px; background: var(--node); border: 2px solid var(--edge); display: grid; place-items: center; }
+  .fn.hub .t { border-color: var(--brand); box-shadow: 0 0 0 7px #ff6d5a1f; }
+  .fn svg { width: 38px; height: 38px; stroke: var(--ink-2); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .fn b { margin-top: 8px; font-size: 15px; }
+  .fn small { color: var(--muted); font-size: 13px; line-height: 1.3; }
+  .fw { flex: 1 0 30px; height: 2px; background: var(--edge); position: relative; margin-bottom: 52px; min-width: 30px; }
+  .fw::after { content: ""; position: absolute; right: -1px; top: -5px; border: 6px solid transparent; border-left: 8px solid var(--edge); border-right: 0; }
+  .fw.flow { background: repeating-linear-gradient(90deg, var(--brand) 0 8px, transparent 8px 16px); background-size: 16px 2px; animation: dash .7s linear infinite; }
+  @keyframes dash { to { background-position: 16px 0; } }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+  /* charts */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; color: var(--ink-2); margin: 8px 0 4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  svg.chart text { fill: var(--muted); font: 12px var(--sans); }
+  svg.chart .lbl { fill: var(--ink-2); font-size: 13px; }
+  svg.chart .val { fill: var(--ink); font-size: 13px; font-weight: 600; }
+  svg.chart .grid { stroke: #ffffff12; }
+  svg.chart .hit { fill: transparent; cursor: default; }
+  svg.chart .hit:hover + .mark, svg.chart .mark:hover { opacity: .8; }
+  #tip { position: fixed; pointer-events: none; background: #111114; border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--ink); z-index: 50; opacity: 0; transition: opacity .12s; white-space: nowrap; }
+  #tip b { display: block; margin-bottom: 2px; }
+  /* lessons */
+  .lesson { border-left: 4px solid var(--brand); padding: 2px 0 2px 16px; }
+  .lesson q { font-size: 18px; font-weight: 600; quotes: "“" "”"; }
+  .ab { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 14px; color: var(--ink-2); align-items: center; }
+  .ab .bar { display: inline-block; width: 120px; height: 10px; background: var(--node-2); border-radius: 5px; overflow: hidden; vertical-align: middle; margin-left: 6px; }
+  .ab .bar i { display: block; height: 100%; border-radius: 5px; }
+  .pill { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 99px; background: #199e7033; color: #6fe0b2; }
+  /* schema */
+  .tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .tbl { background: var(--node); border: 1px solid var(--edge); border-radius: 12px; padding: 14px 16px; }
+  .tbl h3 { margin: 0; font: 600 16px var(--mono); }
+  .tbl .kind { font-size: 12px; font-weight: 700; color: var(--brand); text-transform: uppercase; letter-spacing: .06em; }
+  .tbl p { margin: 6px 0 0; color: var(--ink-2); font-size: 15px; }
+  details { background: var(--node); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 14px; }
+  details + details { margin-top: 8px; }
+  summary { cursor: pointer; font-weight: 600; }
+  summary span { color: var(--muted); font-weight: 500; margin-left: 8px; font-size: 14px; }
+  pre { font: 13px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; margin: 10px 0 0; }
+  .err { color: #ff8a8a; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px; }
+  table.data td, table.data th { padding: 6px 8px; border-top: 1px solid var(--node-2); text-align: left; }
+  table.data th { color: var(--muted); font-weight: 500; }
+  table.data td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .toggle { background: none; border: 1px solid var(--edge); color: var(--ink-2); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; float: right; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="/">why<i>agent</i></a>
+  <nav class="nav"><a href="/live">Pipeline</a><a href="/tiger" aria-current="page">Tiger Data</a><a href="/vultr">Vultr</a><a href="/">Results</a></nav>
+</header>
+<main id="main">
+  <div>
+    <h1><span>Tiger Data</span> is whyagent's memory</h1>
+    <p class="lede">Every test run, every analysis and every proven lesson goes into one Tiger Data database (Postgres + TimescaleDB).
+      Our laptops and the Vultr VM all write to it, and every new coding-agent session reads its lessons back. Everything on this page is queried live.</p>
+  </div>
+  <div id="body"><p class="sub">Querying Tiger Data…</p></div>
+</main>
+<div id="tip"></div>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => Number(n || 0).toLocaleString("en-US");
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const ICON = {
+  laptop: '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
+  server: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  agent: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/>',
+};
+const icon = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
+const STAGE = { precheck: "Reproduce the failure", commit: "Find the commit", blame_hint: "Check git blame", prune: "Set aside unrelated edits",
+                bisect: "Search the edits", confirm: "Prove the cause", ddmin: "Untangle several causes", rerun: "Agent reruns (lesson test)" };
+
+// tooltip: one for every chart
+const tip = $("#tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tip.style.opacity = 0; return; }
+  tip.innerHTML = t.dataset.tip; tip.style.opacity = 1;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px"; tip.style.top = e.clientY + 14 + "px";
+});
+
+function timeline(rows) {
+  const keys = ["PASS", "FAIL", "OTHER"], color = { PASS: css("--c-pass"), FAIL: css("--c-fail"), OTHER: css("--c-other") };
+  const name = { PASS: "Passed", FAIL: "Failed (the bug)", OTHER: "Broke differently" };
+  const by = {};
+  rows.forEach(r => { (by[r.bucket] = by[r.bucket] || { PASS: 0, FAIL: 0, OTHER: 0 })[r.outcome] += r.n; });
+  const buckets = Object.keys(by).sort();
+  const W = 1100, H = 260, L = 44, B = 28, max = Math.max(...buckets.map(b => keys.reduce((s, k) => s + by[b][k], 0)), 1);
+  const nice = Math.ceil(max / 50) * 50, bw = Math.max(4, (W - L) / buckets.length - 2);
+  let g = "";
+  for (let i = 0; i <= 4; i++) { const y = H - B - (H - B - 10) * i / 4; g += `<line class="grid" x1="${L}" x2="${W}" y1="${y}" y2="${y}"/><text x="${L - 8}" y="${y + 4}" text-anchor="end">${fmt(nice * i / 4)}</text>`; }
+  buckets.forEach((b, i) => {
+    const x = L + i * (W - L) / buckets.length + 1;
+    let y = H - B;
+    const d = new Date(b), label = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const total = keys.reduce((s, k) => s + by[b][k], 0);
+    keys.forEach(k => {
+      const h = by[b][k] / nice * (H - B - 10);
+      if (h > 0) { y -= h; g += `<rect class="mark" x="${x}" y="${y + 1}" width="${bw}" height="${Math.max(h - 2, 1)}" rx="2" fill="${color[k]}"/>`; }
+    });
+    g += `<rect class="hit" x="${x - 1}" y="10" width="${bw + 2}" height="${H - B - 10}" data-tip="<b>${esc(d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</b>${keys.map(k => `${name[k]}: ${fmt(by[b][k])}`).join("<br>")}<br>Total: ${fmt(total)}"/>`;
+    if (i % Math.ceil(buckets.length / 8) === 0) g += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${esc(label)}</text>`;
+  });
+  return `<div class="legend">${keys.map(k => `<span><i style="background:${color[k]}"></i>${name[k]}</span>`).join("")}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Test runs per 30 minutes by outcome">${g}</svg>`;
+}
+
+function hbars(rows, valueKey, labelFn, tipFn) {
+  const W = 560, rowH = 34, L = 190, max = Math.max(...rows.map(r => r[valueKey]), 1);
+  let g = "";
+  rows.forEach((r, i) => {
+    const y = i * rowH, w = (W - L - 70) * r[valueKey] / max;
+    g += `<text class="lbl" x="${L - 10}" y="${y + 21}" text-anchor="end">${esc(labelFn(r))}</text>
+      <rect class="mark" x="${L}" y="${y + 8}" width="${Math.max(w, 2)}" height="18" rx="3" fill="${css("--c-bar")}"/>
+      <text class="val" x="${L + w + 8}" y="${y + 22}">${fmt(r[valueKey])}</text>
+      <rect class="hit" x="0" y="${y}" width="${W}" height="${rowH}" data-tip="${esc(tipFn(r))}"/>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${rows.length * rowH}" role="img">${g}</svg>`;
+}
+
+function render(d) {
+  const t = d.totals.rows[0], hyp = d.hypertable.rows[0] || {}, agg = d.aggregate.rows[0] || {};
+  const qs = ["totals", "timeline", "stages", "aggregate", "hypertable", "lessons"];
+  const totalMs = qs.reduce((s, k) => s + d[k].ms, 0);
+  const stages = d.stages.rows.filter(r => r.stage !== "rerun");
+  const reruns = d.stages.rows.find(r => r.stage === "rerun");
+  $("#body").outerHTML = `
+  <div class="tiles">
+    <div class="tile"><div class="v">${fmt(t.analyses)}</div><div class="k">bugs analyzed</div></div>
+    <div class="tile"><div class="v">${fmt(t.test_runs)}</div><div class="k">real test runs logged</div></div>
+    <div class="tile"><div class="v">${fmt(t.reruns)}</div><div class="k">AI agent reruns</div></div>
+    <div class="tile"><div class="v">${fmt(t.reused)}</div><div class="k">runs skipped: already tested</div></div>
+    <div class="tile"><div class="v">${t.hours}</div><div class="k">hours of testing</div></div>
+    <div class="tile"><div class="v">${d.lessons.rows.length}</div><div class="k">proven lessons, shared</div></div>
+  </div>
+
+  <section class="card">
+    <h2>How data flows</h2>
+    <div class="sub">One database, written by every machine that runs whyagent and read by every new agent session.</div>
+    <div class="flow">
+      <div class="col"><div class="fn"><div class="t">${icon("laptop")}</div><b>Our laptops</b><small>Windows and Mac</small></div>
+        <div class="fn"><div class="t">${icon("server")}</div><b>Vultr VM</b><small>8 vCPU, parallel sandboxes</small></div></div>
+      <div class="fw flow"></div>
+      <div class="fn hub"><div class="t">${icon("db")}</div><b>Tiger Data</b><small>every run, as it happens</small></div>
+      <div class="fw flow"></div>
+      <div class="col"><div class="fn"><div class="t">${icon("chart")}</div><b>Dashboards</b><small>this page, the pruning chart</small></div>
+        <div class="fn"><div class="t">${icon("agent")}</div><b>Every new agent</b><small>starts with the proven lessons</small></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Every test run, as it happened</h2>
+    <div class="sub">Test runs per 30 minutes over the hackathon, by result. Bucketed by TimescaleDB's <code>time_bucket()</code> on the <code>runs</code> hypertable.</div>
+    ${timeline(d.timeline.rows)}
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Where the test runs go</h2>
+      <div class="sub">Real test runs per step of the pipeline.</div>
+      ${hbars(stages, "runs", r => STAGE[r.stage] || r.stage, r => `<b>${STAGE[r.stage] || r.stage}</b>${fmt(r.runs)} runs · ${(r.avg_ms / 1000).toFixed(1)} s each on average`)}
+      ${reruns ? `<p class="sub" style="margin-top:10px">Plus ${fmt(reruns.runs)} AI agent reruns, ${(reruns.avg_ms / 1000).toFixed(0)} s each on average.</p>` : ""}
+    </section>
+    <section class="card">
+      <h2>Lessons that proved themselves</h2>
+      <div class="sub">Saved only when fresh agents with the lesson do measurably better than without it (Fisher's exact test, p &lt; 0.05).</div>
+      <div class="col" style="margin-top:14px">${d.lessons.rows.map(l => `
+        <div class="lesson"><q>${esc(l.text)}</q>
+          <div class="ab"><span>Without lesson ${l.a_pass}/${l.a_n}<span class="bar"><i style="width:${l.a_n ? 100 * l.a_pass / l.a_n : 0}%;background:${css("--c-fail")}"></i></span></span>
+            <span>With lesson ${l.b_pass}/${l.b_n}<span class="bar"><i style="width:${l.b_n ? 100 * l.b_pass / l.b_n : 0}%;background:${css("--c-pass")}"></i></span></span>
+            <span class="pill">p = ${l.p != null ? l.p.toFixed(3) : "?"}</span></div></div>`).join("")}</div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>What we store, and the Tiger features we use</h2>
+    <div class="tables" style="margin-top:12px">
+      <div class="tbl"><div class="kind">Hypertable</div><h3>runs</h3><p>One row per test run or agent rerun: step, result, duration, tokens. Partitioned by time (${hyp.num_chunks ?? "?"} chunk${hyp.num_chunks === 1 ? "" : "s"} so far), so time-range queries stay fast as it grows.</p></div>
+      <div class="tbl"><div class="kind">Continuous aggregate</div><h3>runs_by_stage</h3><p>Runs and tokens per step per analysis, kept up to date by a refresh policy every minute: ${fmt(agg.test_runs)} runs across ${fmt(agg.analyses)} analyses, pre-summed for the pruning chart.</p></div>
+      <div class="tbl"><div class="kind">Table</div><h3>analyses</h3><p>One row per bug investigated: which repo and test, whether pruning was used, and where it ran (laptop or Vultr VM) for the speed comparison.</p></div>
+      <div class="tbl"><div class="kind">JSONB</div><h3>lessons</h3><p>The shared rulebook: each proven lesson with its evidence. A hook injects them into every new Claude Code session.</p></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>The queries behind this page</h2>
+    <div class="sub">${qs.length} live queries against Tiger Data, ${totalMs} ms in total (TimescaleDB ${esc(hyp.version || "")}).</div>
+    <div style="margin-top:12px">${qs.map(k => `<details><summary>${esc(k)}<span>${d[k].ms} ms · ${d[k].rows.length} row${d[k].rows.length === 1 ? "" : "s"}</span></summary><pre>${esc(d[k].sql)}</pre></details>`).join("")}</div>
+  </section>`;
+}
+
+fetch("/api/tiger").then(r => r.json()).then(d => {
+  if (d.error) { $("#body").innerHTML = `<p class="err">${esc(d.error)}</p>`; return; }
+  render(d);
+}).catch(() => { $("#body").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+</script>
+</body>
+</html>

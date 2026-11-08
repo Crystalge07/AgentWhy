@@ -5,6 +5,7 @@
   /live[/<id>]  the pipeline view: one analysis drawn stage by stage (the newest one without an id).
                 Live from /api/stream/<id> (Server-Sent Events), or ?replay=1 from /api/replay/<id>: same page,
                 only the event source differs, and it says which one it is showing.
+  /tiger, /vultr  how we use Tiger Data and Vultr, from live Tiger queries (dashboards.py)
   /api/...      the list, events since a byte offset, and POST to start a new analysis
 
 An analysis started from the terminal writes the same history folder, so it shows up here live as well.
@@ -195,6 +196,22 @@ def stream(results: Results, aid: str, write, poll: float = 0.25, idle_s: float 
         time.sleep(poll)
 
 
+def _dashboard(name: str) -> dict:
+    """/api/tiger and /api/vultr: live Tiger queries, or {"error": ...} the page shows."""
+    from . import dashboards, tiger
+    try:
+        conn = tiger.connect()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Couldn't connect to Tiger Data ({type(e).__name__})."}
+    if conn is None:
+        return {"error": "TIGER_DATABASE_URL isn't set, so there's nothing to show."}
+    try:
+        with conn:
+            return json.loads(json.dumps(getattr(dashboards, name)(conn), default=str))
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"Tiger query failed: {type(e).__name__}: {str(e)[:200]}"}
+
+
 def _back_link(html: str) -> str:
     """The saved report, with a way back to the list."""
     return html.replace('<div class="logo">whyagent <span>report</span></div>',
@@ -229,6 +246,10 @@ def serve(history: Path, port: int = 8700, open_browser: bool = False) -> int:
                 return self.send(200, app)
             if parts == ["api", "analyses"]:
                 return self.json(results.list())
+            if parts in (["tiger"], ["vultr"]):
+                return self.send(200, resources.files("whyagent").joinpath(parts[0] + ".html").read_text(encoding="utf-8"))
+            if parts in (["api", "tiger"], ["api", "vultr"]):
+                return self.json(_dashboard(parts[1]))
             if parts[0] == "live" and len(parts) <= 2:
                 # read per request: a tweak to the page shows on reload, no server restart mid-demo
                 return self.send(200, resources.files("whyagent").joinpath("pipeline_view.html").read_text(encoding="utf-8"))
