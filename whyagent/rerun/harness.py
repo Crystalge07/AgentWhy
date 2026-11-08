@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import events
 from ..replay import Replayer, is_test_file
 from ..replay.egress import Egress
 from ..types import RootCause, State
@@ -342,7 +343,7 @@ class Reruns:
             self._egress = Egress(sb.image, self.agent.allow).__enter__()
         try:
             with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-                results = list(pool.map(lambda j: self.one(rc, *j), jobs))
+                results = list(pool.map(lambda j: _announce(self.one(rc, *j)), jobs))
         finally:
             if self._egress is not None:
                 self._egress.__exit__(None, None, None)
@@ -387,3 +388,9 @@ def agent_by_name(name: str, context_file: str | None = None) -> Agent:
     if name == "stub":
         return Stub()
     raise ValueError(f"unknown rerun agent {name!r} (have: gemini-cli, claude-code, stub)")
+
+
+def _announce(r):
+    """A finished rerun, for the live view."""
+    events.emit("rerun_done", arm=r.arm, outcome=r.outcome, detail=r.detail, ms=r.duration_ms, tokens=r.tokens)
+    return r

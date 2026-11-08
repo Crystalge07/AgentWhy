@@ -64,6 +64,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
 | `--render JSON` | Re-render a saved `report.json` to HTML |
+| `--serve` / `--port N` | Results site at `http://127.0.0.1:8700`: every past analysis in `.whyagent/history`, a live view while one runs (terminal runs too), and a form to start new ones. Localhost only |
 | `--chart` | Write the Tiger Data pruning chart (`.whyagent/chart.html`) |
 | `--check-entire` | Smoke-test the Entire connection |
 | `--live` | After the root cause, run the live loop instead of stages 7–8 (see below). Works after a full analysis or with `--root-cause` |

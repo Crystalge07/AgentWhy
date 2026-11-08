@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 
+from . import events
 from .types import RunResult, State
 
 TEMPLATE = "report_template.html"
@@ -58,6 +59,12 @@ class Report(dict):
 
     def note(self, text: str):
         self["notes"].append(text)
+        events.emit("note", text=text)
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key not in ("runs", "notes", "meta"):
+            events.emit("result", key=key, value=_brief(key, value))
 
     def to_json(self) -> str:
         return json.dumps(self, indent=2, default=lambda o: asdict(o) if is_dataclass(o) else str(o))
@@ -70,6 +77,20 @@ class Report(dict):
         data = json.loads(self.to_json())
         html_path.write_text(render_html(data, tiger_runs(data) if tiger else None), encoding="utf-8")
         return html_path
+
+
+def _brief(key: str, value):
+    """A stage's result for the live view: small enough to stream (no diffs, no test output)."""
+    if not isinstance(value, dict):
+        return value
+    if key == "session":
+        steps = value.get("steps") or []
+        return {"id": value.get("id"), "agent": value.get("agent"), "edits": len(steps),
+                "sessions": len([x for x in str(value.get("id", "")).split(", ") if x]),
+                "test_edits": sum(bool(x.get("test")) for x in steps)}
+    if key == "root_cause":
+        return {k: value.get(k) for k in ("step_id", "file", "collateral")}
+    return {k: v for k, v in value.items() if k not in ("failing_output", "steps", "output")}
 
 
 def render_html(data: dict, db: dict | None = None) -> str:

@@ -68,9 +68,35 @@ def cmd_check_entire(_args) -> int:
     return 0 if ok_all else 1
 
 
+def _history(args) -> Path:
+    """Every analysis keeps its own copy here, for `whyagent --serve`'s results list."""
+    return Path(args.report).parent / "history"
+
+
+def _start_events(args, report: Report, analysis_id: str) -> None:
+    from . import events
+
+    m = report["meta"]
+    events.start(_history(args) / analysis_id, id=analysis_id, repo=m.get("repo"), test=m.get("test"),
+                 good=m.get("good"), head=m.get("head"), line=m.get("line"), command=m.get("command"),
+                 workers=getattr(args, "workers", None), sandbox=getattr(args, "sandbox", None))
+
+
 def _finish(report: Report, args, code: int) -> int:
+    import shutil
+
+    from . import events
+
     path = report.write(args.report, tiger=not getattr(args, "live", False))  # --live never touches Tiger
+    aid = report["meta"].get("analysis_id")
+    if aid:
+        hist = _history(args) / aid
+        hist.mkdir(parents=True, exist_ok=True)
+        for f in (path, path.with_suffix(".json")):
+            if f.resolve() != (hist / f.name).resolve():
+                shutil.copyfile(f, hist / f.name)
     print(f"report: {path}")
+    events.emit("done", code=code)  # last: the live view stops listening after it
     if args.open:
         webbrowser.open(path.resolve().as_uri())
     return code
@@ -266,8 +292,10 @@ def cmd_root_cause(args) -> int:
     sandbox = _make_sandbox(args, head)
     if sandbox is None:
         return 2
-    runlog = RunLog(label=f"{Path.cwd().name}: {test}", url="" if args.live else None)  # --live: no Tiger
+    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {test}",
+                    url="" if args.live else None)  # --live: no Tiger
     report["meta"]["analysis_id"] = runlog.analysis_id
+    _start_events(args, report, runlog.analysis_id)
     rp = Replayer(".", rc.edits_before + [rc.step], test, sandbox=sandbox, runlog=runlog, workers=args.workers)
     try:
         if args.live:
@@ -308,8 +336,10 @@ def cmd_analyze(args) -> int:
     good = _git("rev-parse", args.good)
     report = Report(repo=Path.cwd().name, test=args.test, good=good, head=head, line=args.line,
                     command=getattr(args, "command", None))
-    runlog = RunLog(label=f"{Path.cwd().name}: {args.test}", url="" if args.live else None)  # --live: no Tiger
+    runlog = RunLog(analysis_id=args.id, label=f"{Path.cwd().name}: {args.test}",
+                    url="" if args.live else None)  # --live: no Tiger
     report["meta"]["analysis_id"] = runlog.analysis_id  # joins this report to its Tiger rows
+    _start_events(args, report, runlog.analysis_id)
     try:
         return _analyze(args, head, good, report, runlog)
     except Exception as e:  # noqa: BLE001 — an error in any stage still writes the report
@@ -518,6 +548,10 @@ def main(argv=None) -> int:
     p.add_argument("--check-entire", action="store_true", help="smoke-test the Entire connection and exit")
     p.add_argument("--report", default=".whyagent/report.html", help="where to write the HTML report (+ .json)")
     p.add_argument("--open", action="store_true", help="open the HTML report in a browser when done")
+    p.add_argument("--serve", action="store_true",
+                   help="run the results site: every past analysis, live progress, start new ones (localhost only)")
+    p.add_argument("--port", type=int, default=8700, help="--serve: port (default 8700)")
+    p.add_argument("--id", help=argparse.SUPPRESS)  # --serve passes the analysis id it will show
     p.add_argument("--render", metavar="JSON", help="render a saved report .json to HTML and exit")
     p.add_argument("--rerun-agent", choices=["gemini-cli", "claude-code", "stub"],
                    help="agent for counterfactual reruns (default: claude-code with --model claude, else gemini-cli; "
@@ -543,7 +577,11 @@ def main(argv=None) -> int:
                         "$WHYAGENT_CLAUDE_MODEL (e.g. haiku); mock = canned responses for the seeded demo repo, --live only")
     args = p.parse_args(argv)
     import shlex
-    args.command = "whyagent " + shlex.join(sys.argv[1:] if argv is None else argv)  # shown on the report
+    shown = list(sys.argv[1:] if argv is None else argv)
+    if "--id" in shown:  # --serve's own bookkeeping: rerunning with it would overwrite that analysis
+        i = shown.index("--id")
+        del shown[i:i + 2]
+    args.command = "whyagent " + shlex.join(shown)  # shown on the report
     if args.live and (args.trail or args.lesson or args.no_rerun):
         p.error("--live can't be combined with --trail, --lesson or --no-rerun")
     if (args.yes or args.model == "mock") and not args.live:
@@ -552,6 +590,9 @@ def main(argv=None) -> int:
     args.rerun_agent = args.rerun_agent or DEFAULT_AGENT.get(model_name(args.model), "gemini-cli")
     if args.check_entire:
         return cmd_check_entire(args)
+    if args.serve:
+        from .server import serve
+        return serve(_history(args), args.port, open_browser=args.open)
     if args.render:
         return cmd_render(args)
     if args.chart:

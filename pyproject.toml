@@ -19,7 +19,7 @@ whyagent = "whyagent.cli:main"
 include = ["whyagent*"]
 
 [tool.setuptools.package-data]
-whyagent = ["report_template.html"]
+whyagent = ["report_template.html", "app.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

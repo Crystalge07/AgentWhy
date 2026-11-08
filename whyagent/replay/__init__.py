@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from .. import events
 from ..types import OTHER, PASS, TARGET_FAIL, RunResult, State, Step
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError, docker_available  # noqa: F401
 
@@ -133,6 +134,8 @@ class Replayer:
             self._log(k, res, cached=True)
             return res
         self._log(k, hit, cached=True)
+        events.emit("state_start", stage=self.stage, key=k, base=state.base_commit[:7], edits=len(state.step_ids),
+                    runs=n - len(hit))
         new: list[RunResult] = []
         try:
             d = self.build(state)
@@ -158,6 +161,8 @@ class Replayer:
         with self._lock:
             self.cache[k] = res
         self._log(k, new)
+        events.emit("state_done", stage=self.stage, key=k, outcomes=[r.outcome for r in new],
+                    ms=sum(r.duration_ms for r in new))
         return res
 
     def run_many(self, states: list[State], n: int = 1, until_fail: bool = False) -> list[list[RunResult]]:
