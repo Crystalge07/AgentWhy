@@ -255,3 +255,21 @@ whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "pytho
   `ssh -L 8700:127.0.0.1:8700 root@<vm-ip>`, then open http://127.0.0.1:8700/live on the laptop.
 - Events come from `events.stage()` / `events.emit()` calls in the pipeline (no log scraping); they're a
   no-op unless an analysis turned them on, so library use and tests are unaffected.
+
+## Tiger Data and Vultr pages (for the sponsor tracks)
+
+`whyagent --serve` also serves two pages, both queried live from Tiger Data (`whyagent/dashboards.py`):
+
+- **`/tiger`**: what we store and how. Totals (analyses, test runs, agent reruns, runs reused from the cache,
+  hours of testing, validated lessons), test runs per 30 minutes by result (`time_bucket` on the `runs`
+  hypertable), runs per pipeline step, the validated lessons with their without/with evidence and p-values,
+  the schema (hypertable, continuous aggregate with a refresh policy, JSONB lessons), and every query's SQL
+  and run time. Unit-test rows (labels starting `repo:`) are left out.
+- **`/vultr`**: the same bug analyzed on a laptop and on the Vultr VM (time to the proven cause, test runs,
+  seconds per test run), and how it's deployed (commit → auto-sync hook → VM → parallel Docker sandboxes →
+  Tiger). Each analysis records its host in `analyses.host` (the VM is detected from its DMI vendor;
+  `WHYAGENT_HOST` overrides), with `cpus`, `workers` and `finished`.
+
+To add a comparison point, run the same analysis on both machines with the same `--workers` and
+`--no-rerun` (test runs only, no model tokens). Deterministic bugs (scenario 1, 2b) compare cleanly; the
+flaky one (scenario 3) can take different paths per run, so compare its seconds per test run instead.
