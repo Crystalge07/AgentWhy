@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as app.html and the report, sized up for a projector. */
+  :root {
+    --bg: #fcfcfb; --paper: #ffffff; --line: #e7e7e2; --line-2: #d6d6cf;
+    --ink: #121211; --ink-2: #3d3d3a; --muted: #6e6e68; --faint: #a3a39c;
+    --hi: #eef36a;
+    --pass: #1f8a70; --fail: #e0592a; --other: #8a6fd1; --blame: #a86b12; --pruned: #3a5bd9; --live: #d92d20;
+    --pass-bg: #e6f4ef; --fail-bg: #fdebe4; --other-bg: #efeafb; --blame-bg: #fbf1de; --run-bg: #eef1fb;
+    --sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 18px/1.5 var(--sans); -webkit-font-smoothing: antialiased; padding-bottom: 70px; }
+  code, .mono { font-family: var(--mono); }
+  a { color: inherit; }
+  button, select { font: inherit; color: inherit; }
+  .hidden { display: none !important; }
+
+  /* top bar */
+  .bar { display: flex; align-items: center; gap: 18px; padding: 0 32px; min-height: 64px; border-bottom: 1px solid var(--line); background: var(--paper); position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  .logo { font-weight: 700; font-size: 20px; letter-spacing: -0.03em; text-decoration: none; }
+  .logo span { color: var(--muted); font-weight: 500; }
+  .badge { font: 700 15px var(--mono); letter-spacing: .06em; padding: 6px 12px; border: 2px solid currentColor; display: inline-flex; align-items: center; gap: 8px; }
+  .badge.live { color: var(--live); }
+  .badge.live::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--live); animation: blink 1.2s infinite; }
+  .badge.replay { color: var(--blame); }
+  .badge.done { color: var(--muted); }
+  @keyframes blink { 50% { opacity: .2; } }
+  .bar .test { font: 500 16px var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+  .bar .spacer { flex: 1; }
+  .clock { font: 600 20px var(--mono); font-variant-numeric: tabular-nums; }
+  .ctl { display: flex; gap: 6px; align-items: center; }
+  .btn { height: 38px; padding: 0 14px; border: 1px solid var(--line-2); background: var(--paper); cursor: pointer; font-size: 15px; text-decoration: none; display: inline-flex; align-items: center; }
+  .btn.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+  /* node strip: the n8n-style map */
+  .strip { display: flex; align-items: center; padding: 16px 32px; gap: 0; overflow-x: auto; background: var(--paper); border-bottom: 1px solid var(--line); position: sticky; top: 64px; z-index: 9; }
+  .chip { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 92px; cursor: pointer; }
+  .chip .n { width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--line-2); background: var(--paper); display: grid; place-items: center; font: 700 15px var(--mono); color: var(--faint); transition: all .35s; }
+  .chip .l { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.2; transition: color .35s; }
+  .chip.active .n { border-color: var(--ink); color: var(--ink); box-shadow: 0 0 0 6px var(--hi); animation: pulse 1.4s infinite; }
+  .chip.active .l { color: var(--ink); font-weight: 600; }
+  .chip.done .n { border-color: var(--pass); background: var(--pass); color: #fff; }
+  .chip.error .n { border-color: var(--fail); background: var(--fail); color: #fff; }
+  .chip.skip { opacity: .45; }
+  .chip.skip .n { border-style: dashed; }
+  .wire { flex: 1 0 18px; height: 3px; background: var(--line-2); transition: background .35s; }
+  .wire.lit { background: var(--pass); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 11px var(--hi); } }
+
+  /* stage cards */
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 32px; display: flex; flex-direction: column; gap: 0; }
+  .node { background: var(--paper); border: 2px solid var(--line); padding: 20px 24px; transition: border-color .35s, opacity .35s, box-shadow .35s; position: relative; }
+  .node + .node { margin-top: 26px; }
+  .node + .node::before { content: ""; position: absolute; left: 44px; top: -28px; width: 3px; height: 26px; background: var(--line-2); }
+  .node.done + .node::before { background: var(--pass); }
+  .node.idle { opacity: .4; }
+  .node.idle .body { display: none; }
+  .node.skip { opacity: .55; padding: 10px 24px; }
+  .node.active { border-color: var(--ink); box-shadow: 0 0 0 5px var(--hi); }
+  .node.done { border-color: var(--pass); }
+  .node.error { border-color: var(--fail); box-shadow: 0 0 0 5px var(--fail-bg); }
+  .nh { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .nh .k { font: 600 14px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; min-width: 72px; }
+  .nh h2 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+  .nh .st { margin-left: auto; font: 700 15px var(--mono); }
+  .node.done .nh .st { color: var(--pass); }
+  .node.error .nh .st { color: var(--fail); }
+  .node.active .nh .st { color: var(--ink); }
+  .now { margin-top: 8px; font-size: 20px; color: var(--ink-2); min-height: 1.5em; }
+  .node.active .now::after { content: " …"; animation: blink 1.2s infinite; }
+  .body { margin-top: 14px; display: flex; flex-direction: column; gap: 16px; }
+  .say { font-size: 19px; }
+  .say b { font-weight: 600; }
+  .err { color: var(--fail); font-weight: 600; }
+  .sub { font-size: 15px; color: var(--muted); }
+  .code { font: 500 16px/1.45 var(--mono); background: #f5f5f0; border-left: 4px solid var(--line-2); padding: 10px 14px; white-space: pre-wrap; word-break: break-word; }
+  .code.bad { border-left-color: var(--fail); background: var(--fail-bg); }
+
+  /* enter animation for anything that appears */
+  .enter { opacity: 0; transform: translateY(8px) scale(.94); }
+  .tile, .card, .cdot, .say, .rc { transition: opacity .35s, transform .35s, background .35s, border-color .35s, color .35s; }
+
+  /* test tiles: one per tested code version, side by side when parallel */
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tile { min-width: 190px; border: 2px solid var(--line-2); background: var(--paper); padding: 8px 12px; }
+  .tile .v { font: 500 14px var(--mono); color: var(--ink-2); }
+  .tile .o { font: 700 20px var(--mono); margin-top: 2px; }
+  .tile .ms { font: 500 13px var(--mono); color: var(--muted); }
+  .tile.run { border-color: var(--pruned); background: var(--run-bg); }
+  .tile.run .o { color: var(--pruned); animation: blink 1s infinite; }
+  .tile.pass { border-color: var(--pass); background: var(--pass-bg); } .tile.pass .o { color: var(--pass); }
+  .tile.fail { border-color: var(--fail); background: var(--fail-bg); } .tile.fail .o { color: var(--fail); }
+  .tile.other { border-color: var(--other); background: var(--other-bg); } .tile.other .o { color: var(--other); }
+  .tile.empty { border-style: dashed; color: var(--faint); } .tile.empty .o { color: var(--faint); }
+
+  /* commit dots */
+  .dots { display: flex; align-items: flex-start; gap: 0; overflow-x: auto; padding: 6px 2px 2px; }
+  .cdot { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 104px; position: relative; }
+  .cdot::after { content: ""; position: absolute; top: 15px; left: 50%; width: 100%; height: 3px; background: var(--line-2); z-index: 0; }
+  .cdot:last-child::after { display: none; }
+  .cdot .d { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--line-2); background: var(--paper); z-index: 1; transition: all .35s; }
+  .cdot .s { font: 600 14px var(--mono); }
+  .cdot .t { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.2; max-height: 2.5em; overflow: hidden; padding: 0 4px; }
+  .cdot.range .d { border-color: var(--ink); }
+  .cdot.out { opacity: .35; }
+  .cdot.pass .d { background: var(--pass); border-color: var(--pass); }
+  .cdot.fail .d { background: var(--fail); border-color: var(--fail); }
+  .cdot.other .d { background: var(--other); border-color: var(--other); }
+  .cdot.probe .d { box-shadow: 0 0 0 6px var(--hi); animation: pulse 1.4s infinite; }
+  .cdot.guilty .d { box-shadow: 0 0 0 6px var(--fail-bg); transform: scale(1.25); }
+  .cdot.guilty .s { color: var(--fail); }
+
+  /* edit cards */
+  .cards { display: flex; flex-wrap: wrap; gap: 10px; }
+  .card { width: 228px; border: 2px solid var(--line-2); background: var(--paper); padding: 8px 10px 10px; position: relative; }
+  .card .h { display: flex; gap: 8px; align-items: baseline; }
+  .card .id { font: 700 20px var(--mono); }
+  .card .f { font: 500 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .c { font: 500 13px/1.35 var(--mono); margin-top: 4px; color: var(--ink-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .card .tag { position: absolute; top: -12px; right: 8px; font: 700 12px var(--mono); padding: 1px 6px; background: var(--ink); color: #fff; }
+  .card .tag:empty { display: none; }
+  .card.wide { width: 100%; }
+  .card.wide .c { -webkit-line-clamp: unset; }
+  .card .why { font-size: 15px; color: var(--ink-2); margin-top: 6px; }
+  .card .why b { color: var(--muted); font-weight: 500; }
+  .card.applied { border-color: var(--pruned); background: var(--run-bg); }
+  .card.out { opacity: .3; }
+  .card.testfile { opacity: .45; border-style: dashed; }
+  .card.suspect { border-color: var(--blame); background: var(--blame-bg); }
+  .card.suspect .tag { background: var(--blame); }
+  .card.notcause { border-color: var(--line-2); background: var(--paper); }
+  .card.notcause .tag { background: var(--muted); text-decoration: line-through; }
+  .card.pulled { transform: translateY(14px) rotate(-2deg); border-style: dashed; opacity: .55; }
+  .card.guilty { border-color: var(--fail); background: var(--fail-bg); box-shadow: 0 0 0 4px var(--fail-bg); }
+  .card.guilty .tag { background: var(--fail); }
+  .range { font: 600 16px var(--mono); color: var(--ink-2); }
+  .range b { background: var(--hi); padding: 0 4px; }
+
+  .verdict { font: 700 34px var(--mono); letter-spacing: .02em; }
+  .verdict.VALIDATED { color: var(--pass); } .verdict.PROMISING { color: var(--blame); }
+  .verdict.INEFFECTIVE, .verdict.INCONCLUSIVE { color: var(--fail); } .verdict.NOT_NEEDED { color: var(--pruned); }
+  .lesson { font-size: 26px; font-weight: 600; line-height: 1.35; border-left: 6px solid var(--hi); padding: 6px 0 6px 16px; }
+  .pill { display: inline-block; font: 600 14px var(--mono); padding: 2px 8px; border: 1px solid var(--line-2); margin-right: 6px; }
+  .arm { display: flex; align-items: center; gap: 14px; }
+  .arm .lab { width: 170px; flex: none; font-weight: 600; font-size: 16px; }
+  .arm .tile { min-width: 120px; }
+  .sumgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .sumgrid > div { border: 1px solid var(--line); padding: 12px 14px; }
+  .sumgrid .k { font-size: 14px; color: var(--muted); }
+  .sumgrid .v { font: 700 24px var(--mono); }
+
+  .ticker { position: fixed; left: 0; right: 0; bottom: 0; background: var(--ink); color: #e9e9e4; font: 500 15px var(--mono); padding: 12px 32px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 10; }
+  .ticker b { color: var(--hi); font-weight: 600; margin-right: 10px; }
+
+  .pick { max-width: 900px; margin: 48px auto; padding: 0 32px; }
+  .pick h1 { font-size: 30px; margin: 0 0 8px; }
+  .pick table { width: 100%; border-collapse: collapse; margin-top: 20px; background: var(--paper); border: 1px solid var(--line); }
+  .pick td { padding: 12px 14px; border-top: 1px solid var(--line); font-size: 16px; }
+  @media (max-width: 760px) { .bar, .strip, main { padding-left: 16px; padding-right: 16px; } .bar .test { max-width: 90vw; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <a class="logo" href="/">whyagent <span>pipeline</span></a>
+  <span id="badge" class="badge hidden"></span>
+  <span id="test" class="test"></span>
+  <span class="spacer"></span>
+  <span id="replayctl" class="ctl hidden">
+    <button class="btn" id="pause">Pause</button>
+    <button class="btn" id="restart">Restart</button>
+    <span class="sub">speed</span>
+    <button class="btn spd" data-s="0.5">½×</button><button class="btn spd on" data-s="1">1×</button><button class="btn spd" data-s="2">2×</button><button class="btn spd" data-s="4">4×</button>
+  </span>
+  <a class="btn hidden" id="toreplay">Watch as replay</a>
+  <span class="clock" id="clock">0:00</span>
+</header>
+<nav class="strip" id="strip"></nav>
+<main id="main"></main>
+<section class="pick hidden" id="pick"></section>
+<div class="ticker" id="ticker"><b>whyagent</b>waiting for the analysis…</div>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// The pipeline, in order. `dim`: a stage we may skip; it collapses to one line when skipped.
+const NODES = [
+  { k: "failed",     n: "!", t: "Test failed",             s: "input" },
+  { k: "precheck",   n: "0", t: "Precheck",                s: "stage 0" },
+  { k: "commit",     n: "1", t: "Find the guilty commit",  s: "stage 1" },
+  { k: "entire",     n: "E", t: "Entire: fetch the agent's session", s: "entire" },
+  { k: "session",    n: "2", t: "Rebuild the session",     s: "stage 2" },
+  { k: "blame_hint", n: "3", t: "Blame hint",              s: "stage 3" },
+  { k: "prune",      n: "4", t: "Pruning",                 s: "stage 4", dim: true },
+  { k: "bisect",     n: "5", t: "Bisect over the agent's edits", s: "stage 5" },
+  { k: "confirm",    n: "6", t: "Confirm: revert it, test passes", s: "stage 6" },
+  { k: "lesson",     n: "7", t: "Lesson",                  s: "stage 7" },
+  { k: "rerun",      n: "8", t: "Counterfactual reruns",   s: "stage 8" },
+  { k: "result",     n: "✓", t: "Result",                  s: "result" },
+];
+const STAGE_NODE = { precheck: "precheck", commit: "commit", blame_hint: "blame_hint", prune: "prune", bisect: "bisect", confirm: "confirm", ddmin: "confirm" };
+const OUT = { PASS: "pass", TARGET_FAIL: "fail", OTHER: "other" };
+
+// ---------------------------------------------------------------- state: one reducer for live and replay
+let S;
+function fresh() {
+  const nodes = {};
+  NODES.forEach(n => nodes[n.k] = { status: "idle", now: "" });
+  return { nodes, meta: null, t0: null, tLast: null, tiles: {}, failure: null, commits: null, blameCommit: null,
+           steps: [], order: [], blame: null, prune: null, bisect: null, confirm: null, rc: null,
+           lookup: null, lesson: null, fallback: null, rerun: null, line: "", notes: [], done: null, error: null, runs: 0 };
+}
+
+function vote(outs) {  // replay.vote: any target failure counts; OTHER only when nothing else
+  if (outs.includes("TARGET_FAIL")) return "TARGET_FAIL";
+  if (outs.length && outs.every(o => o === "PASS")) return "PASS";
+  return outs.includes("PASS") && !outs.includes("OTHER") ? "PASS" : "OTHER";
+}
+
+function setNode(k, status, now) {
+  const n = S.nodes[k];
+  if (!n) return;
+  if (status) n.status = status;
+  if (now !== undefined) n.now = now;
+}
+
+function activeNode() {
+  return NODES.map(n => n.k).filter(k => S.nodes[k].status === "active").pop();
+}
+
+function apply(ev) {
+  S.tLast = ev.t ?? S.tLast;
+  switch (ev.type) {
+    case "meta":
+      S.meta = ev; S.t0 = ev.t;
+      setNode("failed", "active", "Reproducing the failure in a clean sandbox");
+      break;
+    case "line":
+      S.line = ev.text;
+      if (/→ writing it with Claude/.test(ev.text)) S.fallback = ev.text.replace(/^lesson:\s*/, "");
+      break;
+    case "note":
+      S.notes.push(ev.text);
+      break;
+    case "error":
+      S.error = ev.text;
+      { const a = activeNode(); if (a) setNode(a, "error", ev.text); }
+      break;
+    case "failure":
+      S.failure = ev;
+      setNode("failed", "done", "");
+      break;
+    case "stage": onStage(ev); break;
+    case "commits": S.commits = ev; break;
+    case "blame_commit": S.blameCommit = ev; break;
+    case "steps": S.steps = ev.steps; S.order = ev.order; S.prompt = ev.prompt; S.agent = ev.agent; break;
+    case "state_start": {
+      const node = STAGE_NODE[ev.stage]; if (!node) break;
+      S.tiles[node] = S.tiles[node] || {};
+      S.tiles[node][ev.key] = { ...ev, running: true, seq: Object.keys(S.tiles[node]).length };
+      S.focus = { node, ids: ev.ids, base: ev.base };
+      break;
+    }
+    case "state_done": {
+      const node = STAGE_NODE[ev.stage]; if (!node) break;
+      S.tiles[node] = S.tiles[node] || {};
+      const prev = S.tiles[node][ev.key];
+      S.tiles[node][ev.key] = { ...(prev || { seq: Object.keys(S.tiles[node]).length }), ...ev, running: false,
+                                cached: ev.cached && !prev, outcome: vote(ev.outcomes || []) };
+      if (!ev.cached) S.runs += (ev.outcomes || []).length;
+      break;
+    }
+    case "lookup": S.lookup = ev; break;
+    case "rerun_done":
+      if (S.rerun) (ev.arm === "A" ? S.rerun.a : S.rerun.b).push(ev);
+      break;
+    case "root_cause": S.rc = ev; break;
+    case "result":
+      if (ev.key === "root_cause" && !S.rc) S.rc = { step_id: ev.value.step_id, file: ev.value.file };
+      if (ev.key === "rerun" && S.rerun && ev.value) Object.assign(S.rerun, { verdict: ev.value.verdict, p: ev.value.p });
+      if (ev.key === "lesson" && ev.value) S.lesson = ev.value;
+      break;
+    case "done": {
+      S.done = ev;
+      const a = activeNode();
+      if (ev.code !== 0 && a) setNode(a, "error", S.nodes[a].now || lastStop() || "stopped");
+      NODES.forEach(n => { if (S.nodes[n.k].status === "active") setNode(n.k, "done"); });
+      setNode("result", ev.code === 0 ? "done" : (S.rc ? "done" : "error"), "");
+      break;
+    }
+  }
+}
+
+function lastStop() {
+  return S.notes.filter(n => /^(Aborted|Analysis stopped|HEAD passes|Bisect inconclusive|Every commit|Couldn't load|Commit bisect|More than one|Lesson|Reruns)/.test(n)).pop();
+}
+
+function onStage(ev) {
+  const k = ev.name;
+  if (ev.status === "start") {
+    if (!S.nodes.failed || S.nodes.failed.status === "active") setNode("failed", "done");
+    if (k === "precheck") setNode(k, "active", `Running the test ${ev.runs}× at HEAD (${ev.head}) and ${ev.runs}× at the good commit (${ev.good}), in parallel`);
+    if (k === "commit") setNode(k, "active", `Which commit between ${ev.good} and HEAD broke it?`);
+    if (k === "entire") setNode(k, "active", `Reading the Entire-Checkpoint trailer on ${ev.commit} and loading the agent's transcript`);
+    if (k === "session") setNode(k, "active", "Turning the transcript back into replayable edits");
+    if (k === "blame_hint") { S.blame = { ...ev }; setNode(k, "active", `git blame says edit #${ev.suspect} wrote ${ev.line}. Reverting it to check`); }
+    if (k === "prune") setNode(k, "active", "Tracing imports from the test to drop edits it can't reach");
+    if (k === "bisect") { S.bisect = { kept: ev.kept, workers: ev.workers }; setNode(k, "active", `Searching ${ev.kept.length} edits, ${ev.workers} test${ev.workers > 1 ? "s" : ""} at a time`); }
+    if (k === "confirm") { S.confirm = { ...ev }; setNode(k, "active", `Final code minus edit #${ev.root}${ev.reverted.length > 1 ? " (and the edits that depend on it)" : ""}: does the test pass?`); }
+    if (k === "lesson") setNode(k, "active", "Checking the lesson store for a validated lesson about this failure");
+    if (k === "rerun") {
+      S.rerun = { agent: ev.agent, runs: ev.runs, a: [], b: [], restart: ev.restart };
+      setNode(k, "active", `${ev.agent} redoes the task ${ev.runs}× without the lesson and ${ev.runs}× with it`);
+    }
+  } else if (ev.status === "done") {
+    if (k === "precheck") setNode(k, "done", ev.mode === "flaky" ? `Flaky: ${ev.runs_per_state} runs per code version, any target failure counts` : "Stable: HEAD always fails, the good commit always passes");
+    if (k === "commit") setNode(k, "done", `${ev.method === "blame" ? "git blame, confirmed by tests" : "git bisect"} → ${ev.guilty} “${ev.subject}”`);
+    if (k === "entire") setNode(k, "done", `Checkpoint ${ev.checkpoint} · ${ev.sessions} agent session${ev.sessions === 1 ? "" : "s"}`);
+    if (k === "session") setNode(k, "done", `${ev.edits} edits, replayed byte for byte`);
+    if (k === "blame_hint") {
+      Object.assign(S.blame, ev);
+      setNode(k, ev.is_cause ? "done" : "done", ev.is_cause ? `Edit #${ev.suspect} is the cause (boundary checked)` : `Edit #${ev.suspect} is NOT the cause: reverting it, the test still fails`);
+    }
+    if (k === "prune") setNode(k, "done", ev.pruned.length ? `Pruned ${ev.pruned.length} edit(s), verified with one run` : "Nothing to prune");
+    if (k === "bisect") { Object.assign(S.bisect, ev); setNode(k, "done", `First failing version: after edit #${ev.boundary} (${ev.runs} test runs)`); }
+    if (k === "confirm") setNode(k, "done", `Revert edit #${ev.root} → test passes. Proven.`);
+    if (k === "lesson") setNode(k, "done", "");
+    if (k === "rerun") { Object.assign(S.rerun, { verdict: ev.verdict, p: ev.p }); setNode(k, "done", `Without lesson ${ev.a} pass · with lesson ${ev.b} pass`); }
+  } else if (ev.status === "skip") {
+    setNode(k, "skip", ev.why || "skipped");
+    if (k === "bisect" || k === "confirm") S.viaBlame = ev.boundary || ev.root;
+  } else if (ev.status === "error") {
+    if (k === "rerun" && S.rerun) S.rerun.verdict = ev.verdict;
+    setNode(k, "error", ev.why || "failed");
+  }
+}
+
+// ---------------------------------------------------------------- DOM: keyed upserts so CSS transitions play
+function put(parent, key, cls, html, tag = "div") {
+  let el = parent.querySelector(`:scope > [data-k="${CSS.escape(String(key))}"]`);
+  if (!el) {
+    el = document.createElement(tag);
+    el.dataset.k = key;
+    el.className = cls + " enter";
+    el._c = cls;
+    el.innerHTML = html; el._h = html;
+    parent.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("enter")));
+    return el;
+  }
+  if (el._c !== cls) { el.className = cls; el._c = cls; }
+  if (el._h !== html) { el.innerHTML = html; el._h = html; }
+  return el;
+}
+function box(parent, key, cls = "") { return put(parent, key, cls, "", "div"); }
+function boxKeep(parent, key, cls) {  // a container whose children we manage ourselves
+  let el = parent.querySelector(`:scope > [data-k="${key}"]`);
+  if (!el) { el = document.createElement("div"); el.dataset.k = key; parent.appendChild(el); }
+  if (el.className !== cls) el.className = cls;
+  return el;
+}
+
+function buildSkeleton() {
+  $("#strip").innerHTML = NODES.map((n, i) => (i ? `<div class="wire" id="w-${n.k}"></div>` : "") +
+    `<div class="chip" id="c-${n.k}" data-go="${n.k}"><div class="n">${n.n}</div><div class="l">${esc(n.t.split(":")[0])}</div></div>`).join("");
+  $("#main").innerHTML = NODES.map(n => `<section class="node idle" id="n-${n.k}">
+      <div class="nh"><span class="k">${n.s}</span><h2>${esc(n.t)}</h2><span class="st"></span></div>
+      <div class="now"></div><div class="body"></div></section>`).join("");
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => $(`#n-${c.dataset.go}`).scrollIntoView({ behavior: "smooth", block: "center" }));
+}
+
+const fmtMs = ms => ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+const fmtClock = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+
+function editLabel(ids, order) {
+  if (!ids) return "";
+  const k = ids.length;
+  if (!k) return "P(0) · no edits yet";
+  if (order && ids.every((x, i) => x === order[i])) return k === order.length ? `P(${k}) · all ${k} edits` : `P(${k}) · edits #${order[0]}–#${ids[k - 1]}`;
+  if (order && ids.every(x => order.includes(x))) {
+    const miss = order.filter(x => !ids.includes(x));
+    if (miss.length && miss.length <= 4) return `final code minus ${miss.map(x => "#" + x).join(", ")}`;
+  }
+  return `edits ${ids.map(x => "#" + x).join(" ")}`;
+}
+
+function versionLabel(t, node) {
+  const m = S.meta || {};
+  if (node === "precheck" || node === "commit") {
+    if (m.head && t.base === m.head.slice(0, 7)) return `HEAD ${t.base}`;
+    if (m.good && t.base === m.good.slice(0, 7)) return `good ${t.base}`;
+    return `commit ${t.base}`;
+  }
+  const order = node === "bisect" && S.bisect ? S.bisect.kept : S.order;
+  return editLabel(t.ids, order);
+}
+
+function renderTiles(parent, node) {
+  const wrap = boxKeep(parent, "tiles-" + node, "tiles");
+  const tiles = Object.values(S.tiles[node] || {}).sort((a, b) => a.seq - b.seq);
+  tiles.forEach(t => {
+    const o = t.running ? "run" : OUT[t.outcome] || "other";
+    const n = (t.outcomes || []).length || t.runs || 1;
+    const meta = t.running ? `running${n > 1 ? ` ×${n}` : ""}` : t.cached ? "already tested · reused" :
+      `${fmtMs(t.ms)}${n > 1 ? ` · ×${n} runs` : ""}${t.detail ? " · " + t.detail : ""}`;
+    put(wrap, t.key, `tile ${o}`, `<div class="v">${esc(versionLabel(t, node))}</div>
+      <div class="o">${t.running ? "RUNNING" : esc(t.outcome)}</div><div class="ms">${esc(meta)}</div>`);
+  });
+  return wrap;
+}
+
+function stepById(id) { return S.steps.find(s => s.id === id); }
+
+function cardHtml(s, tag) {
+  return `<span class="tag">${esc(tag || "")}</span><div class="h"><span class="id">#${s.id}</span><span class="f">${esc(s.file)}:${s.line}</span></div><div class="c">${esc(s.change)}</div>`;
+}
+
+function renderCards(parent, key, ids, clsFor, tagFor) {
+  const wrap = boxKeep(parent, key, "cards");
+  ids.forEach(id => { const s = stepById(id); if (s) put(wrap, id, "card " + (clsFor(id) || ""), cardHtml(s, tagFor ? tagFor(id) : "")); });
+  return wrap;
+}
+
+function para(parent, key, html, cls = "say") { return put(parent, key, cls, html); }
+
+function render() {
+  const m = S.meta || {};
+  $("#test").textContent = m.test || "";
+  // strip + node shells
+  NODES.forEach((n, i) => {
+    const st = S.nodes[n.k];
+    const cls = st.status;
+    $(`#c-${n.k}`).className = `chip ${cls}`;
+    if (i) $(`#w-${n.k}`).className = "wire" + (["done", "active", "error"].includes(cls) ? " lit" : "");
+    const sec = $(`#n-${n.k}`);
+    sec.className = `node ${cls}`;
+    $(".st", sec).textContent = { idle: "", active: "RUNNING", done: "DONE", skip: "SKIPPED", error: "STOPPED" }[cls];
+    const now = $(".now", sec);
+    if (now.textContent !== st.now) now.textContent = st.now;
+  });
+  const body = k => $(`#n-${k} .body`);
+
+  // test failed
+  if (S.meta) {
+    const b = body("failed");
+    para(b, "cmd", `<span class="sub">test</span><div class="code">${esc(m.test)}</div>`, "");
+    if (S.failure) para(b, "sig", `<span class="sub">failure signature at HEAD</span><div class="code bad">${esc(S.failure.error || S.failure.signature)}</div>`, "");
+  }
+
+  // precheck
+  if (S.tiles.precheck) renderTiles(body("precheck"), "precheck");
+
+  // commit search
+  {
+    const b = body("commit");
+    if (S.blameCommit) {
+      const bc = S.blameCommit;
+      para(b, "blame", `git blame <b>${esc(bc.line)}</b> → commit <b class="mono">${esc(bc.commit)}</b> “${esc(bc.subject)}”` +
+        (bc.code && bc.code[0] ? `<div class="code">${esc(bc.code[0].trim())}</div>` : "") +
+        `<div class="sub">Check it with tests: its parent must pass and the commit itself must fail.</div>`);
+    }
+    if (S.commits) renderCommitDots(b);
+    if (S.tiles.commit) renderTiles(b, "commit");
+  }
+
+  // entire
+  // (the node's "now" line carries it)
+
+  // session cards
+  if (S.steps.length) {
+    const b = body("session");
+    if (S.prompt) para(b, "prompt", `<span class="sub">task the ${esc(S.agent)} agent was given</span><div class="code">${esc(S.prompt)}</div>`, "");
+    const wrap = boxKeep(b, "cards", "cards");
+    S.steps.forEach(s => put(wrap, s.id, "card wide" + (s.test ? " testfile" : ""),
+      cardHtml(s, s.test ? "test file · pinned" : s.command ? "shell edit" : "") +
+      (s.reasoning ? `<div class="why"><b>reasoning</b> ${esc(s.reasoning)}</div>` : "") +
+      (s.trigger ? `<div class="why"><b>reacting to</b> <span class="mono">${esc(s.trigger)}</span></div>` : "")));
+  }
+
+  renderBlame(body("blame_hint"));
+  if (S.nodes.prune.status !== "idle" && S.nodes.prune.status !== "skip" && S.tiles.prune) renderTiles(body("prune"), "prune");
+  renderBisect(body("bisect"));
+  renderConfirm(body("confirm"));
+  renderLesson(body("lesson"));
+  renderRerun(body("rerun"));
+  renderResult(body("result"));
+
+  $("#ticker").innerHTML = `<b>${S.done ? "finished" : "now"}</b>${esc(S.line || "waiting for the analysis…")}`;
+}
+
+function renderCommitDots(b) {
+  const list = [{ sha: S.commits.good, subject: "good commit", good: true }, ...S.commits.commits];
+  const tested = {};
+  Object.values(S.tiles.commit || {}).forEach(t => tested[t.base] = t);
+  const idx = sha => list.findIndex(c => c.sha === sha);
+  let lo = 0, hi = list.length - 1;
+  Object.values(tested).forEach(t => { if (t.running) return; const i = idx(t.base); if (i < 0) return;
+    if (t.outcome === "PASS") lo = Math.max(lo, i); if (t.outcome === "TARGET_FAIL") hi = Math.min(hi, i); });
+  const done = S.nodes.commit.status === "done";
+  const wrap = boxKeep(b, "dots", "dots");
+  list.forEach((c, i) => {
+    const t = tested[c.sha];
+    let cls = "cdot";
+    if (c.good) cls += " pass"; else if (t && !t.running) cls += " " + (OUT[t.outcome] || "other");
+    if (t && t.running) cls += " probe";
+    cls += (i >= lo && i <= hi) ? " range" : " out";
+    if (done && i === hi && lo === hi - 1) cls += " guilty";
+    put(wrap, c.sha, cls, `<div class="d"></div><div class="s">${esc(c.sha)}</div><div class="t">${esc(c.good ? "good" : i === list.length - 1 ? "HEAD · " + c.subject : c.subject)}</div>`);
+  });
+  para(b, "crange", `<span class="range">${hi - lo <= 1 ? `guilty: <b>${esc(list[hi].sha)}</b>` : `search range: <b>${esc(list[lo].sha)}</b> passes … <b>${esc(list[hi].sha)}</b> fails · ${hi - lo - 1} commit(s) left between`}</span>`, "");
+}
+
+function renderBlame(b) {
+  const bh = S.blame;
+  if (!bh || !S.steps.length) return;
+  const settled = bh.is_cause !== undefined;
+  para(b, "said", `<b>git blame</b> says <b>${esc(bh.line)}</b> was written by <b>edit #${bh.suspect}</b>. A human would stop here and blame it. We test it instead.`);
+  renderCards(b, "cards", S.order, id => {
+    if (id === bh.suspect) return settled && !bh.is_cause ? "notcause" : settled ? "guilty" : "suspect";
+    if (bh.reverted && bh.reverted.includes(id)) return "pulled";
+    return "";
+  }, id => id === bh.suspect ? (settled ? (bh.is_cause ? "CAUSE" : "NOT THE CAUSE") : "SUSPECT") : "");
+  para(b, "how", `<span class="sub">Test the final code with edit #${bh.suspect}${bh.reverted && bh.reverted.length > 1 ? " and its dependents" : ""} reverted: if blame were right, the test would pass.</span>`, "");
+  renderTiles(b, "blame_hint");
+  if (settled) para(b, "verdict", bh.is_cause
+    ? `<b>Confirmed:</b> reverting edit #${bh.suspect} makes the test pass, and the boundary checks out.`
+    : `<span class="err">Reverted edit #${bh.suspect} → the test still ${bh.outcome === "OTHER" ? "doesn't pass (it now fails a different way)" : "fails"}.</span> git blame pointed at the wrong edit. Now we search for the real one.`);
+}
+
+function renderBisect(b) {
+  const bi = S.bisect;
+  if (!bi) {
+    if (S.viaBlame) para(b, "via", `The blame hint already proved edit #${S.viaBlame}, so no search was needed.`);
+    return;
+  }
+  const kept = bi.kept;
+  let lo = 0, hi = kept.length;
+  Object.values(S.tiles.bisect || {}).forEach(t => {
+    if (t.running || !t.ids || !t.ids.every((x, i) => x === kept[i])) return;
+    if (t.outcome === "PASS") lo = Math.max(lo, t.ids.length);
+    if (t.outcome === "TARGET_FAIL") hi = Math.min(hi, t.ids.length);
+  });
+  const finished = bi.boundary != null;
+  const applied = S.focus && S.focus.node === "bisect" ? new Set(S.focus.ids) : new Set();
+  para(b, "explain", `<span class="sub">P(k) = the parent commit plus the agent's first k edits. P(0) passes, P(${kept.length}) fails, so somewhere one edit flips it. Each test runs in its own Docker container.</span>`, "");
+  renderCards(b, "cards", kept, id => {
+    const i = kept.indexOf(id) + 1;
+    if (finished && id === bi.boundary) return "guilty";
+    let c = i > lo && i <= hi ? "" : "out";
+    if (applied.has(id) && !finished) c += " applied";
+    return c;
+  }, id => finished && id === bi.boundary ? "GUILTY" : applied.has(id) && !finished && S.focus.ids[S.focus.ids.length - 1] === id ? `P(${S.focus.ids.length})` : "");
+  para(b, "range", `<span class="range">${finished ? `first failing prefix: <b>P(${kept.indexOf(bi.boundary) + 1})</b> → edit <b>#${bi.boundary}</b>` :
+    hi - lo <= 1 && hi > 0 ? `narrowed to edit <b>#${kept[hi - 1]}</b>` :
+    `range: <b>P(${lo})</b> passes … <b>P(${hi})</b> fails · ${hi - lo} edit(s) left: #${kept[lo] ?? "?"}–#${kept[hi - 1] ?? "?"}`}</span>`, "");
+  renderTiles(b, "bisect");
+}
+
+function renderConfirm(b) {
+  const c = S.confirm;
+  if (c) {
+    const order = c.kept || S.order;
+    renderCards(b, "cards", order, id => id === c.root ? "guilty pulled" : c.reverted.includes(id) ? "pulled" : "",
+      id => id === c.root ? "REVERTED" : c.reverted.includes(id) ? "depends on it" : "");
+    renderTiles(b, "confirm");
+  }
+  if (S.rc) {
+    const s = stepById(S.rc.step_id) || {};
+    para(b, "rc", `<div class="card wide guilty"><span class="tag">ROOT CAUSE</span>
+      <div class="h"><span class="id">#${S.rc.step_id}</span><span class="f">${esc(S.rc.file)}:${esc(S.rc.line ?? s.line ?? "")}</span></div>
+      <div class="c">${esc(S.rc.change || s.change || "")}</div>
+      <div class="why"><b>the agent was reacting to</b> <span class="mono">${esc(S.rc.trigger || s.trigger || "(nothing recorded)")}</span></div>
+      <div class="why"><b>its reasoning</b> ${esc(S.rc.reasoning || s.reasoning || "(hidden: not in the transcript)")}</div></div>`, "rc");
+  }
+}
+
+function renderLesson(b) {
+  if (S.lookup) para(b, "lookup", S.lookup.found
+    ? `Lesson store: <b>found a validated lesson</b> for this failure. Reusing it.`
+    : `Lesson store: <b>no validated lesson</b> for this failure yet${S.lookup.error ? " (lookup failed)" : ""} → writing a new one.`);
+  if (S.fallback) para(b, "fb", `<span class="sub">${esc(S.fallback)}</span>`, "");
+  const L = S.lesson;
+  if (L) {
+    const who = { gemini: "written by Gemini", claude: S.fallback ? "written by Claude (Gemini unavailable, fallback)" : "written by Claude",
+                  brain: "from the lesson store", given: "given with --lesson" }[L.source] || L.source;
+    para(b, "text", `<div class="lesson">${esc(L.text)}</div>`, "");
+    para(b, "who", `<span class="pill">${esc(who)}</span>`, "");
+  }
+}
+
+function renderRerun(b) {
+  const R = S.rerun;
+  if (!R) return;
+  para(b, "explain", `<span class="sub">Rewind to just before the guilty edit and hand the same task to ${esc(R.agent)} again, in fresh sandboxes. Did the lesson change what it does?</span>`, "");
+  [["A", "without lesson", R.a], ["B", "with lesson", R.b]].forEach(([arm, lab, runs]) => {
+    const row = boxKeep(b, "arm" + arm, "arm");
+    put(row, "lab", "lab", lab);
+    const tiles = boxKeep(row, "t", "tiles");
+    for (let i = 0; i < R.runs; i++) {
+      const r = runs[i];
+      put(tiles, i, r ? `tile ${OUT[r.outcome] || "other"}` : "tile empty",
+        `<div class="v">run ${i + 1}</div><div class="o">${r ? esc(r.outcome) : "…"}</div><div class="ms">${r ? esc(fmtMs(r.ms)) : "waiting"}</div>`);
+    }
+  });
+  if (R.verdict) para(b, "verdict", `<div class="verdict ${esc(R.verdict)}">${esc(R.verdict)}</div><div class="sub">${R.p != null ? `Fisher exact test p = ${Number(R.p).toFixed(3)}` : ""}${
+    R.verdict === "NOT_NEEDED" ? " · the agent already gets this right without the lesson, so we don't save it" :
+    R.verdict === "VALIDATED" ? " · saved as a validated lesson" : ""}</div>`, "");
+}
+
+function renderResult(b) {
+  if (!S.done) return;
+  const dur = S.done.t && S.t0 ? fmtClock(S.done.t - S.t0) : "?";
+  const rc = S.rc;
+  para(b, "grid", `<div class="sumgrid">
+    <div><div class="k">guilty edit</div><div class="v">${rc ? `#${rc.step_id}` : "none"}</div><div class="sub">${rc ? esc(rc.file + (rc.line ? ":" + rc.line : "")) : esc(lastStop() || S.error || "no root cause found")}</div></div>
+    <div><div class="k">proof</div><div class="v">${S.runs} test runs</div><div class="sub">real runs in sandboxes, not an LLM's opinion</div></div>
+    <div><div class="k">time</div><div class="v">${dur}</div><div class="sub">end to end${S.meta && S.meta.workers ? `, ${S.meta.workers} workers` : ""}</div></div>
+    <div><div class="k">lesson</div><div class="v">${esc(S.rerun && S.rerun.verdict || (S.lesson ? "written" : "—"))}</div><div class="sub">${S.rerun && S.rerun.p != null ? "p = " + Number(S.rerun.p).toFixed(3) : ""}</div></div>
+  </div>`, "");
+  if (ID) para(b, "link", `<a class="btn on" href="/a/${encodeURIComponent(ID)}">Open the full report →</a>`, "");
+}
+
+// ---------------------------------------------------------------- event sources: the only live/replay difference
+const parts = location.pathname.split("/").filter(Boolean);
+const ID = parts[1] || null;
+const REPLAY = new URLSearchParams(location.search).has("replay");
+let speed = 1, paused = false, timer = null, queue = [], qi = 0, lastActive = null, clockBase = null;
+
+function handle(ev) {
+  apply(ev);
+  render();
+  const a = activeNode();
+  if (a && a !== lastActive) { lastActive = a; $(`#n-${a}`).scrollIntoView({ behavior: "smooth", block: "start" }); window.scrollBy(0, -150); }
+}
+
+function reset() {
+  S = fresh(); lastActive = null;
+  buildSkeleton();
+  render();
+}
+
+function setBadge(kind, text) {
+  const b = $("#badge");
+  b.className = "badge " + kind;
+  b.textContent = text;
+}
+
+function startLive() {
+  setBadge("live", "LIVE");
+  $("#toreplay").href = `/live/${encodeURIComponent(ID)}?replay=1`;
+  const opened = Date.now() / 1000;
+  const es = new EventSource(`/api/stream/${encodeURIComponent(ID)}`);
+  es.onopen = () => reset();  // the stream always starts from the first event, so a reconnect redraws from scratch
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    handle(ev);
+    if (ev.type === "done") {
+      es.close();
+      $("#toreplay").classList.remove("hidden");
+      // Shown all at once because it had finished before this page opened: say so, don't pass it off as live.
+      if (S.t0 && S.t0 < opened - 20 && ev.t < opened) setBadge("done", "FINISHED RUN · not live");
+      else setBadge("done", "LIVE · finished");
+    }
+  };
+  es.addEventListener("end", () => { es.close(); if (!S.done) setBadge("done", "STOPPED · no live events"); $("#toreplay").classList.remove("hidden"); });
+  setInterval(() => {
+    if (!S || !S.t0) return;
+    const end = S.done ? S.done.t : Date.now() / 1000;
+    $("#clock").textContent = fmtClock(end - S.t0);
+  }, 500);
+}
+
+async function startReplay() {
+  $("#replayctl").classList.remove("hidden");
+  let data;
+  try { data = await (await fetch(`/api/replay/${encodeURIComponent(ID)}`)).json(); } catch { data = { error: "couldn't reach the whyagent server" }; }
+  if (data.error) { reset(); S.line = data.error; render(); return; }
+  queue = data.events;
+  const meta = queue.find(e => e.type === "meta");
+  const when = meta ? new Date(meta.t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  setBadge("replay", `REPLAY of a recorded run${when ? " · recorded " + when : ""}`);
+  document.querySelectorAll(".spd").forEach(btn => btn.onclick = () => {
+    speed = Number(btn.dataset.s);
+    document.querySelectorAll(".spd").forEach(x => x.classList.toggle("on", x === btn));
+  });
+  $("#pause").onclick = () => { paused = !paused; $("#pause").textContent = paused ? "Play" : "Pause"; if (!paused) step(); };
+  $("#restart").onclick = () => { clearTimeout(timer); qi = 0; reset(); paused = false; $("#pause").textContent = "Pause"; step(); };
+  reset();
+  step();
+  setInterval(() => { if (S && S.t0 && S.tLast) $("#clock").textContent = fmtClock(S.tLast - S.t0) + " recorded"; }, 300);
+}
+
+function step() {
+  clearTimeout(timer);
+  if (paused || qi >= queue.length) return;
+  const ev = queue[qi];
+  timer = setTimeout(() => {
+    qi++;
+    handle(ev);
+    step();
+  }, (ev.delay || 0) * 1000 / speed);
+}
+
+async function pickRun() {
+  // /live with no id: follow the newest running analysis, or list recent ones to watch live or replay
+  $("#main").classList.add("hidden"); $("#strip").classList.add("hidden");
+  const pick = $("#pick"); pick.classList.remove("hidden");
+  const seen = Date.now() / 1000;
+  async function look() {
+    let rows = [];
+    try { rows = await (await fetch("/api/analyses")).json(); } catch {}
+    const running = rows.find(r => r.status === "running" || r.status === "starting");
+    if (running) { location.href = `/live/${encodeURIComponent(running.id)}`; return; }
+    pick.innerHTML = `<h1>Waiting for an analysis…</h1><p class="sub">Start one (terminal or the results page) and this page jumps to it live. Or watch a recorded one:</p>
+      <table>${rows.slice(0, 12).map(r => `<tr><td class="mono">${esc(r.test)}</td><td>${esc(r.repo)}</td><td class="sub">${esc((r.when || "").replace("T", " ").slice(0, 16))}</td>
+      <td>${r.cause ? `edit #${r.cause.edit}` : esc(r.status)}</td><td><a class="btn" href="/live/${encodeURIComponent(r.id)}?replay=1">Replay</a></td></tr>`).join("")}</table>`;
+    setTimeout(look, 2000);
+  }
+  look();
+}
+
+if (!ID) pickRun();
+else if (REPLAY) startReplay();
+else startLive();
+</script>
+</body>
+</html>
