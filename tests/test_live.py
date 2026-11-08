@@ -165,6 +165,10 @@ def test_make_model(monkeypatch):
     assert "GEMINI_API_KEY" in make_model("gemini").missing_auth()
     with pytest.raises(ModelError):
         make_model("gpt")
+    m = make_model("claude")
+    assert m.name == "claude" and m.rerun_agent == "claude-code"
+    assert make_model("gemini").rerun_agent == "gemini-cli"
+    assert make_model("claude", "stub").rerun_agent == "stub"
 
 
 def test_cli_flag_checks():
@@ -173,3 +177,5 @@ def test_cli_flag_checks():
         main(["--yes", "--test", "x", "--good", "y"])
     with pytest.raises(SystemExit):
         main(["--live", "--trail", "--test", "x", "--good", "y"])
+    with pytest.raises(SystemExit):
+        main(["--model", "mock", "--test", "x", "--good", "y"])

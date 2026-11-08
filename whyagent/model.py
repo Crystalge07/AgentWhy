@@ -2,6 +2,9 @@
 
     WHYAGENT_MODEL=mock   (or --model mock)    canned responses for the seeded demo repo, no network
     WHYAGENT_MODEL=gemini (default)            Gemini writes the rule; the rerun agent is --rerun-agent
+    WHYAGENT_MODEL=claude                      `claude -p` writes the rule (CLAUDE_CODE_OAUTH_TOKEN or
+                                               ANTHROPIC_API_KEY, model WHYAGENT_CLAUDE_MODEL); reruns default
+                                               to claude-code
 
 The mock is for demos and rehearsals while we have no Gemini access. Its test runs are real (the
 target test runs on whatever the mock agent wrote); only the "model" output is canned.
@@ -17,7 +20,8 @@ from .rerun.harness import Agent, agent_by_name
 from .types import RootCause
 
 AGENT_INSTRUCTIONS = "AGENTS.md"  # the file name rerun agents read inside the rewound worktree
-MODELS = ("gemini", "mock")
+MODELS = ("gemini", "claude", "mock")
+DEFAULT_AGENT = {"gemini": "gemini-cli", "claude": "claude-code"}
 
 
 class ModelError(RuntimeError):
@@ -55,6 +59,22 @@ class GeminiModel(Model):
 
     def agent(self, rule: str | None = None) -> Agent:
         return agent_by_name(self.rerun_agent, context_file=AGENT_INSTRUCTIONS)
+
+
+class ClaudeModel(GeminiModel):
+    """Claude Code headless writes the rule (`claude -p`, no tools); reruns use --rerun-agent (default claude-code)."""
+    name = "claude"
+
+    def __init__(self, rerun_agent: str = "claude-code"):
+        super().__init__(rerun_agent)
+
+    def missing_auth(self) -> str | None:
+        from .rerun.lesson import claude_missing
+        return claude_missing() or agent_by_name(self.rerun_agent).missing_auth()
+
+    def generate(self, prompt: str) -> str:
+        from .rerun.lesson import claude_generate
+        return claude_generate(prompt)
 
 
 class MockAgent(Agent):
@@ -107,10 +127,17 @@ class MockModel(Model):
                          env={"WHYAGENT_MOCK": json.dumps(cfg), "WHYAGENT_MOCK_AGENT": src})
 
 
-def make_model(name: str | None, rerun_agent: str = "gemini-cli", local: bool = False) -> Model:
-    name = (name or os.environ.get("WHYAGENT_MODEL") or "gemini").strip().lower()
+def model_name(name: str | None) -> str:
+    """--model, else $WHYAGENT_MODEL, else gemini."""
+    return (name or os.environ.get("WHYAGENT_MODEL") or "gemini").strip().lower()
+
+
+def make_model(name: str | None, rerun_agent: str | None = None, local: bool = False) -> Model:
+    name = model_name(name)
     if name == "mock":
         return MockModel(local=local)
     if name == "gemini":
-        return GeminiModel(rerun_agent)
+        return GeminiModel(rerun_agent or DEFAULT_AGENT[name])
+    if name == "claude":
+        return ClaudeModel(rerun_agent or DEFAULT_AGENT[name])
     raise ModelError(f"unknown model {name!r} (WHYAGENT_MODEL / --model: {', '.join(MODELS)})")
