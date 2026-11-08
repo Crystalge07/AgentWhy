@@ -1,13 +1,13 @@
 # Seeded demo repo and recording guide
 
-The demo repo is `payments-demo` (a sibling of this repo): a small Payments API client with a
+The demo repo is `payments-api-client` (a sibling of this repo): a small Payments API client with a
 pytest suite and a fake API, with Entire enabled from the first commit. It contains **no bugs**.
 The bugs come from real agent sessions recorded on top of it.
 
 Before recording, check that the repo can still produce all three bugs:
 
 ```sh
-.venv/bin/python demo/check_seeded.py ../payments-demo     # Windows: .venv\Scripts\python
+.venv/bin/python demo/check_seeded.py ../payments-api-client     # Windows: .venv\Scripts\python
 .venv/bin/python demo/preflight.py                         # everything else; run before every demo
 ```
 
@@ -16,15 +16,15 @@ branch is checked out. `preflight.py` marks Gemini, Claude and Vultr checks SKIP
 
 It plants a hand-written version of each mistake in a throwaway copy and checks the failure
 (last verified 2026-11-07: baseline 5/5 pass, scenario 1 and 2 fail 3/3, scenario 3 fails 14/30).
-Those patches live here, never in `payments-demo`, so recorded agents can't see them.
+Those patches live here, never in `payments-api-client`, so recorded agents can't see them.
 
 ## Try it yourself (for judges)
 
-The judge-facing demo repo is **whyagent-demo**:
+The judge-facing demo repo is **payments-client**:
 
-- Code: https://github.com/Crystalge07/whyagent-demo (its README has the results table and the reports)
-- Sessions: the Entire repo `et/agentwhy/whyagent-demo`, which holds the transcripts
-- The PR whyagent opened: https://github.com/Crystalge07/whyagent-demo/pull/1
+- Code: https://github.com/Crystalge07/payments-client (its README has the results table and the reports)
+- Sessions: the Entire repo `et/agentwhy/payments-client`, which holds the transcripts
+- PRs whyagent opened (closed ones included): https://github.com/Crystalge07/payments-client/pulls?q=is%3Apr
 
 The tag `seed` is the clean starting point: the Payments client with Entire enabled, before any
 README. Branch from it, not from `main`. `main`'s README describes the mistakes, and an agent
@@ -43,7 +43,7 @@ You need Python 3.10+, Docker, Claude Code, the Entire CLI and whyagent (`pip in
 **Rerun an analysis.** This needs read access to the Entire repo, because the session loads from there:
 
 ```sh
-entire repo clone /et/agentwhy/whyagent-demo && cd whyagent-demo
+entire repo clone /et/agentwhy/payments-client && cd payments-client
 T="python -m pytest -q -p no:cacheprovider"
 git checkout scenario-1 && whyagent --good seed --no-rerun --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
 git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --no-rerun --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
@@ -53,7 +53,7 @@ git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --n
 
 1. Start from the seed and turn on recording:
    ```sh
-   git clone https://github.com/Crystalge07/whyagent-demo && cd whyagent-demo
+   git clone https://github.com/Crystalge07/payments-client && cd payments-client
    git checkout -b try seed
    entire enable --agent claude-code     # then start a NEW Claude Code session in this folder
    ```
@@ -77,12 +77,12 @@ git checkout scenario-2 && whyagent --good seed --line payments/client.py:37 --n
    credentials and takes a while. Add `--no-rerun` to stop after the root cause, or `--pr` (on a
    fork you can push to) to get a PR when the lesson is validated.
 
-The older recordings in `payments-demo` (below) are kept for reference. `whyagent-demo` replaces them
+The older recordings in `payments-api-client` (below) are kept for reference. `payments-client` replaces them
 for the demo.
 
 ## Recording a scenario
 
-1. In `payments-demo`, make sure `entire status` says Enabled and that you're on a fresh branch from `main`.
+1. In `payments-api-client`, make sure `entire status` says Enabled and that you're on a fresh branch from `main`.
 2. Start a **new** Claude Code session (sessions started before `entire enable` aren't recorded).
 3. Paste the task prompt below and let the agent work. Don't hint at the mistake. Aim for about 15 edits.
 4. Let the agent commit. The commit must get an `Entire-Checkpoint:` trailer.
@@ -132,7 +132,7 @@ type of the last error."
 
 ## Recorded so far (2026-11-07, A)
 
-All three recordings are real Entire sessions on branches of `payments-demo`. In each, the agent
+All three recordings are real Entire sessions on branches of `payments-api-client`. In each, the agent
 **edited an existing test so its change would pass**. A follow-up human commit restores the original test, which is exactly the
 case whyagent pins tests to HEAD for. The demo should say so plainly.
 
@@ -154,7 +154,7 @@ attempt), so 9 edits are unattributed and the agent's reasoning isn't shown. Loc
 pushed. A clean long recording needs a machine/clone without stale sessions (try `entire clean`
 first, after asking).
 
-**`entire why` vs whyagent (demo beat for the Entire judges).** In `payments-demo` on
+**`entire why` vs whyagent (demo beat for the Entire judges).** In `payments-api-client` on
 `scenario-2b-clean`, `entire why payments/client.py:39` shows the session behind the decoy line, and
 `entire why payments/config.py:9` says its agent/prompt are "a best-effort guess" (the edit was a
 `sed -i`). Run both before whyagent: whyagent says the first is NOT the cause and pins the second to
@@ -177,7 +177,7 @@ To rerun an analysis (Docker sandbox; for `--sandbox local` use a full interpret
 Windows a Windows-style one, e.g. from `pwd -W`):
 
 ```sh
-cd payments-demo
+cd payments-api-client
 T="python -m pytest -q -p no:cacheprovider"
 git checkout scenario-1        && whyagent --good 87dc38e --line payments/client.py:43 --test "$T tests/test_client.py::test_list_invoices_returns_every_invoice"
 git checkout scenario-2b-clean && whyagent --good f39623e --line payments/client.py:39 --test "$T tests/test_client.py::test_retries_server_errors_then_succeeds"
@@ -204,7 +204,7 @@ WHYAGENT_STUB_CMD='case "$WHYAGENT_PROMPT" in *Lesson*) true ;; *) <repeat the b
 ## Live loop (`--live`)
 
 Runs on the mock model (no Gemini, no network). The mock covers scenario 2b only. Run it from
-`payments-demo` on `scenario-2b-clean`, against the saved root cause:
+`payments-api-client` on `scenario-2b-clean`, against the saved root cause:
 
 ```sh
 WHYAGENT_MODEL=mock whyagent --live --yes \

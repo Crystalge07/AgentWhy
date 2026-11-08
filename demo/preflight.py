@@ -1,12 +1,12 @@
 """Demo preflight: checks infra, the seeded repo, the recorded sessions and the pipeline in one go.
 
-    python demo/preflight.py [../payments-demo] [--quick] [--seeded] [--live-gemini]
+    python demo/preflight.py [../payments-api-client] [--quick] [--seeded] [--live-gemini]
 
 Every check prints PASS / FAIL / SKIP / WARN. SKIP means blocked on access we don't have yet
 (Vultr, Gemini) or a check you didn't ask for; it never fails the run. Exit code 1 if any FAIL.
 
   --quick        skip test runs (tools, config, Entire and session parsing only, ~10 s)
-  --seeded       also run demo/check_seeded.py on a clean snapshot of payments-demo main (~60 s)
+  --seeded       also run demo/check_seeded.py on a clean snapshot of payments-api-client main (~60 s)
   --live-gemini  actually call Gemini once (costs quota); otherwise Gemini checks are SKIP
 
 Read-only for both repos: test runs use throwaway git worktrees and containers, never the checkout.
@@ -136,7 +136,7 @@ def config(demo: Path):
 
     def whyagent_ignored():
         ok = subprocess.run(["git", "check-ignore", "-q", ".whyagent/report.html"], cwd=demo).returncode == 0
-        return ("PASS", ".whyagent/ ignored") if ok else ("WARN", ".whyagent/ not in payments-demo .gitignore; reports show as untracked")
+        return ("PASS", ".whyagent/ ignored") if ok else ("WARN", ".whyagent/ not in payments-api-client .gitignore; reports show as untracked")
     check("config", "demo repo ignores .whyagent/", whyagent_ignored)
 
     def tiger():
@@ -273,7 +273,7 @@ def pipeline_e2e(demo: Path, quick: bool):
 
 def seeded(demo: Path, run: bool):
     if not run:
-        mark("seeded", "check_seeded on payments-demo main", "SKIP", "pass --seeded (~60 s)")
+        mark("seeded", "check_seeded on payments-api-client main", "SKIP", "pass --seeded (~60 s)")
         return
 
     def go():
@@ -281,7 +281,7 @@ def seeded(demo: Path, run: bool):
                             "--flaky-runs", "20"], capture_output=True, timeout=900, **_ENC)
         bad = [ln for ln in p.stdout.splitlines() if ln.startswith("✗")] or p.stderr.strip().splitlines()[-1:]
         return ("PASS", "baseline + 4 planted bugs behave") if p.returncode == 0 else ("FAIL", "; ".join(bad)[:200])
-    check("seeded", "check_seeded on payments-demo main", go)
+    check("seeded", "check_seeded on payments-api-client main", go)
 
 
 def unit_tests():
@@ -297,7 +297,7 @@ def main() -> int:
         if hasattr(s, "reconfigure"):
             s.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
-    ap.add_argument("demo", nargs="?", default=str(ROOT.parent / "payments-demo"))
+    ap.add_argument("demo", nargs="?", default=str(ROOT.parent / "payments-api-client"))
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--seeded", action="store_true")
     ap.add_argument("--live-gemini", action="store_true")
