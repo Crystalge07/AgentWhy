@@ -352,9 +352,7 @@ function apply(ev) {
 
 // sandbox slots: a free one per test run, so parallel runs show side by side
 function take(key, what, node) {
-  const n = workers();
-  while (S.slots.length < n) S.slots.push({ key: null });
-  let s = S.slots.find(x => !x.key || x.done);
+  let s = S.slots.find(x => !x.key || x.done);  // reuse a finished sandbox, else open another one
   if (!s) { s = { key: null }; S.slots.push(s); }
   Object.assign(s, { key, what, node, done: false, outcome: null, since: Date.now() });
 }
@@ -374,7 +372,7 @@ function onStage(ev) {
       lesson: "Checking past lessons", rerun: "Fresh agents, with vs. without",
     }[k];
     setNode(k, "active", sub);
-    if (STAGE_NODE[k] || k === "rerun") S.slots = S.slots.map(() => ({ key: null }));
+    if (STAGE_NODE[k] || k === "rerun") S.slots = [];
     if (k === "blame_hint") S.blame = { ...ev };
     if (k === "bisect") S.bisect = { kept: ev.kept };
     if (k === "confirm") S.confirm = { ...ev };
@@ -479,9 +477,10 @@ function renderCanvas() {
   });
   // the sandbox branch fans out under whichever stage is running tests
   const anchor = poolAnchor();
-  const n = S.slots.length || workers();
+  const n = S.slots.length;
   const span = 175;
-  const show = !!anchor;
+  const show = !!anchor && n > 0;
+  w.querySelectorAll(".sbx").forEach(el => { if (Number(el.dataset.k.slice(3)) >= n) el.remove(); });
   for (let i = 0; i < n; i++) {
     const s = S.slots[i] || {};
     const x = (anchor ? POS[anchor] : POS[activeNode() || "failed"]) + (i - (n - 1) / 2) * span;
@@ -495,9 +494,9 @@ function renderCanvas() {
     }
   }
   const tag = $("#pooltag");
-  if (anchor) {
+  if (show) {
     tag.style.left = POS[anchor] + "px"; tag.style.top = POOL_Y + 120 + "px"; tag.style.opacity = 1;
-    tag.textContent = `${n} sandboxes in parallel · each a clean, isolated copy of the code`;
+    tag.textContent = n === 1 ? "A sandbox: a clean, isolated copy of the code" : `${n} sandboxes at once · each a clean, isolated copy of the code`;
   } else tag.style.opacity = 0;
   $("#edges").innerHTML = svg;
   // camera: keep the stage that's working in the middle
@@ -607,7 +606,7 @@ const PANELS = {
     });
     const fin = bi.boundary != null;
     const applied = new Set(S.focus && S.focus.node === "bisect" && !fin ? S.focus.ids : []);
-    say(pb, "a", `Replay the agent's edits in order and test after each step: <b>${workers()} sandboxes at once</b>, each trying a different point. Wherever it flips from passing to failing is the edit that broke it.`);
+    say(pb, "a", `Replay the agent's edits in order and test along the way, <b>several points at once</b>, each in its own sandbox. Wherever it flips from passing to failing is the edit that broke it.`);
     cardsRow(pb, "cards", S.order.filter(id => kept.includes(id) || (S.prune && S.prune.pruned.includes(id))), id => {
       if (!kept.includes(id)) return ["aside", "set aside"];
       const i = kept.indexOf(id) + 1;
