@@ -1,8 +1,10 @@
-# whyagent
+# agentwhy
 
-`git blame` for agent decisions. When an AI coding agent breaks a test, whyagent finds which agent *edit* caused it, proves it with real test runs (not an LLM's opinion), shows the agent's reasoning and the error it was reacting to, then validates a lesson with counterfactual reruns before saving it. Built on [Entire](https://entire.io), which records agent sessions and links each one to its commit.
+`git blame` for agent decisions. When an AI coding agent breaks a test, agentwhy finds which agent *edit* caused it, proves it with real test runs (not an LLM's opinion), shows the agent's reasoning and the error it was reacting to, then validates a lesson with counterfactual reruns before saving it. Built on [Entire](https://entire.io), which records agent sessions and links each one to its commit.
 
 > "`git blame` tells you which line changed. We tell you which decision caused it, and prove it."
+
+The command is `agentwhy`. The Python package, its env vars (`WHYAGENT_*`) and its folders (`.whyagent/`) keep the old name `whyagent`, and the `whyagent` command still works, so existing scripts and hooks don't break.
 
 Full spec: `whyagent — PRD.md`. Demo repo and recordings: `docs/demo.md`. Presentation material: `docs/slides.md`.
 
@@ -13,7 +15,7 @@ Full spec: `whyagent — PRD.md`. Demo repo and recordings: `docs/demo.md`. Pres
 python3 -m venv .venv                    python -m venv .venv
 .venv/bin/pip install -e '.[dev]'        .venv\Scripts\pip install -e '.[dev]'
 .venv/bin/pytest -q                      .venv\Scripts\pytest -q
-.venv/bin/whyagent --check-entire        .venv\Scripts\whyagent --check-entire
+.venv/bin/agentwhy --check-entire        .venv\Scripts\agentwhy --check-entire
 ```
 
 Needs git, Docker (default sandbox), and the Entire CLI with `entire enable --agent claude-code` run in the analyzed repo. Optional env vars (put them in `.env`, never in committed files): `GEMINI_API_KEY` (Stage 7 lesson + Gemini CLI reruns), `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude Code reruns, and the fallback for every model call when Gemini is missing, out of quota or errors; the token comes from `claude setup-token` and runs on a Claude subscription), `TIGER_DATABASE_URL` (run log, chart, shared Brain). Infra (Vultr VM, Tiger Data): `docs/setup.md`.
@@ -23,7 +25,7 @@ Needs git, Docker (default sandbox), and the Entire CLI with `entire enable --ag
 Run it inside the repo whose test broke. It needs one failing test and a commit where that test passes:
 
 ```sh
-whyagent --good f39623e \
+agentwhy --good f39623e \
   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
 
@@ -96,13 +98,13 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 From a proven root cause to a rule the agent follows, in one command:
 
 ```sh
-WHYAGENT_MODEL=mock whyagent --live --yes --root-cause .whyagent/s2b/root_cause.json \
+WHYAGENT_MODEL=mock agentwhy --live --yes --root-cause .whyagent/s2b/root_cause.json \
   --test "python -m pytest -q -p no:cacheprovider tests/test_client.py::test_retries_server_errors_then_succeeds"
 ```
 
 1. **Diagnose**: shows the culprit edit, checks the test still fails, then reruns the agent `--runs` times (default 5) from just before the edit with no rule, keeping each run's diff.
 2. **Rule**: compares runs that passed with runs that didn't (which files each changed, sample lines) and has the model phrase one rule. It stops if no run passed (no contrast) or every run passed (no rule needed).
-3. **Approve**: `[y]es / [n]o / [e]dit` (`$EDITOR` if set). On approval the rule is added to `--instructions` under `## Rules from whyagent` with a `<!-- whyagent: test=… session=… edit=#k -->` comment. A rule that's already there isn't added again.
+3. **Approve**: `[y]es / [n]o / [e]dit` (`$EDITOR` if set). On approval the rule is added to `--instructions` under `## Rules from agentwhy` with a `<!-- agentwhy: test=… session=… edit=#k -->` comment. A rule that's already there isn't added again.
 4. **Rewind**: rebuilds the state before the culprit edit (the commit's parent plus the session's earlier edits) in a throwaway git worktree, with the rules as `AGENTS.md` (Claude Code gets a `CLAUDE.md` that imports it). Entire's CLI can't restore a checkpoint, so this is the same replay the bisect uses. Your checkout is never touched.
 5. **Rerun**: the agent redoes the original task. The rule is only in `AGENTS.md`, not in the prompt.
 6. **Verify**: target test, regressions and test-file tampering, as a before/after table. A pass is labelled **rerun passed (unvalidated)**: one rerun isn't proof. Stage 8 is still the A/B test.
@@ -113,18 +115,21 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 
 ### Results site (`--serve`)
 
-`whyagent --serve` opens a localhost site listing every analysis in `.whyagent/history`, newest first (the list refreshes on its own). A running analysis shows a live view: the CLI's lines plus a square per test run, coloured by outcome, and reruns split into the with-lesson and without-lesson arms. Finished analyses show their full report. A form starts new analyses (rerun agent defaults to Claude Code). Analyses started from the terminal show up too, since both write the same history folder.
+`agentwhy --serve` opens a localhost site listing every analysis in `.whyagent/history`, newest first (the list refreshes on its own). A running analysis shows a live view: the CLI's lines plus a square per test run, coloured by outcome, and reruns split into the with-lesson and without-lesson arms. Finished analyses show their full report. A form starts new analyses (rerun agent defaults to Claude Code). Analyses started from the terminal show up too, since both write the same history folder.
 
-## Status (2026-11-07, evening)
+## Status (2026-11-08)
 
-- **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 106 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
-- **Stages 0–8 verified end to end with a real agent** on scenario 2b: Claude Code reruns, 8 per arm, 4 workers. Best result: without the lesson 0/8 pass, with it 7/8, p = 0.0007 → **VALIDATED** and saved to Brain, in ~2.7 min total (~2.5M rerun tokens). A vaguer lesson scored 0/8 vs 5/8 (p = 0.013, validated); at 5 runs per arm, 0/5 vs 3/5 was only PROMISING (p = 0.08). The validated lessons were passed with `--lesson`.
-- **Model calls go Gemini first, Claude second** (`whyagent/providers.py`): if Gemini isn't configured, is out of quota or errors, the call goes to Claude and Gemini isn't retried for the rest of the run. Reports and Tiger record which provider answered. Gemini's first lesson on 2b suggested editing the tests, so the lesson prompt now forbids that.
-- **Live loop (`--live`) verified end to end on the mock** on scenario 2b in the Docker sandbox (~12 s). With a real model it's untested.
-- **Vultr VM** (8 vCPU) is set up and every commit auto-syncs to it (`scripts/sync_vm.py`, see `docs/setup.md`); the recorded results above ran on a laptop.
-- **Not tried yet:** more than 4 workers on real sessions, the egress proxy outside the tests, a Stage 8 run on scenario 1 or 3 with a real agent.
+- **Stages 0–6 verified end to end** in the Docker sandbox. payments-api-client's scenarios 1, 2b (blame NOT the cause) and 3 (flaky) ran on both macOS and Windows. payments-client's `scenario-1` (2 runs) and `scenario-2` (6 runs, blame NOT the cause) are recorded in `docs/demo.md`. 124 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
+- **Stages 0–8 verified end to end with a real agent** (Claude Code reruns):
+  - `scenario-1`: without the lesson 0/6 pass, with it 6/6, p = 0.001 → **VALIDATED**. `--pr` opened a PR on payments-client from a passing rerun's fix, re-verified at HEAD.
+  - `scenario-2b-clean`: 0/8 vs 7/8, p = 0.0007 → **VALIDATED** (~2.7 min, ~2.5M rerun tokens). A vaguer lesson scored 0/8 vs 5/8 (p = 0.013); at 5 runs per arm, 0/5 vs 3/5 was only PROMISING (p = 0.08).
+- **Model calls go Gemini first, Claude second** (`whyagent/providers.py`): if Gemini isn't configured, is out of quota or errors, the call goes to Claude and Gemini isn't retried for the rest of the run. Reports and Tiger record which provider answered. The lesson prompt forbids editing the tests, after Gemini's first lesson suggested it.
+- **Live loop (`--live`)** verified end to end on the mock on `scenario-2b-clean` (~12 s). Untested with a real model.
+- **Results site** (`--serve`, main page `/live`): light and dark themes. It follows the system theme, and the top bar's toggle overrides it and remembers the choice. Reports written by `--render` or a new analysis have the same toggle.
+- **Vultr VM** (8 vCPU) is set up and every commit auto-syncs to it (`scripts/sync_vm.py`, see `docs/setup.md`).
+- **Not tried yet:** more than 4 workers on real sessions, the egress proxy outside the tests, Stage 8 on the flaky scenario with a real agent.
 - Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a local JSONL store (`~/.whyagent/brain.jsonl` or `WHYAGENT_BRAIN`) mirrored to a `lessons` table in Tiger Data, so validated lessons are shared across the team.
-- `whyagent --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
+- `agentwhy --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
 
 ## Layout
 

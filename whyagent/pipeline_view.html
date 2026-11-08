@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent</title>
+<title>agentwhy</title>
 <link rel="stylesheet" href="/site.css">
 <style>
   /* A workflow canvas: stages left to right, connections that fill in as work flows through, the test sandboxes
      branching off below whichever stage is running tests. Sized for a projector. Colours only carry meaning:
      blue running, green passed, red-orange failed, violet "other", amber git blame's pick. */
   :root {
-    --canvas: var(--bg); --dot: #dcd8cd; --node: var(--paper); --node-2: var(--wash); --edge: var(--line-2);
+    --canvas: var(--bg); --node: var(--paper); --node-2: var(--wash); --edge: var(--line-2);
     --brand: var(--ink); --info: var(--run);
     --panel: var(--paper); --panel-line: var(--line);
   }
@@ -718,7 +718,7 @@ function startLive() {
 
 async function startReplay() {
   let data;
-  try { data = await (await fetch(`/api/replay/${encodeURIComponent(ID)}`)).json(); } catch { data = { error: "Couldn't reach the whyagent server." }; }
+  try { data = await (await fetch(`/api/replay/${encodeURIComponent(ID)}`)).json(); } catch { data = { error: "Couldn't reach the agentwhy server." }; }
   reset();
   if (data.error) { $("#pname").textContent = data.error; return; }
   queue = data.events;

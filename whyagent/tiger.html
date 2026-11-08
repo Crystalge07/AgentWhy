@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>whyagent · Tiger Data</title>
+<title>agentwhy · Tiger Data</title>
 <link rel="stylesheet" href="/site.css">
 </head>
 <body class="sponsor">
 <!--site-bar-->
 <main id="main">
   <div>
-    <h1><span>Tiger Data</span> is whyagent's memory</h1>
+    <h1><span>Tiger Data</span> is agentwhy's memory</h1>
     <p class="lede">Every test run, every analysis and every proven lesson goes into one Tiger Data database (Postgres + TimescaleDB).
       Our laptops and the Vultr VM all write to it, and every new coding-agent session reads its lessons back. Everything on this page is queried live.</p>
   </div>
@@ -100,7 +100,7 @@ function render(d) {
 
   <section class="card">
     <h2>How data flows</h2>
-    <div class="sub">One database, written by every machine that runs whyagent and read by every new agent session.</div>
+    <div class="sub">One database, written by every machine that runs agentwhy and read by every new agent session.</div>
     <div class="flow">
       <div class="col"><div class="fn"><div class="t">${icon("laptop")}</div><b>Our laptops</b><small>Windows and Mac</small></div>
         <div class="fn"><div class="t">${icon("server")}</div><b>Vultr VM</b><small>8 vCPU, parallel sandboxes</small></div></div>
@@ -156,7 +156,7 @@ function render(d) {
 fetch("/api/tiger").then(r => r.json()).then(d => {
   if (d.error) { $("#body").innerHTML = `<p class="err">${esc(d.error)}</p>`; return; }
   render(d);
-}).catch(() => { $("#body").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+}).catch(() => { $("#body").innerHTML = `<p class="err">Couldn't reach the agentwhy server.</p>`; });
 </script>
 </body>
 </html>

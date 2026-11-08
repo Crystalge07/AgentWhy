@@ -117,9 +117,9 @@ const labels = Object.keys(bugs).sort();
 const paired = labels.filter(l => bugs[l].pruned && bugs[l].blind);
 const sum = k => paired.reduce((a, l) => a + total(bugs[l][k]), 0);
 const max = Math.max(1, ...D.rows.map(total));
-let h = `<h1>Graph pruning savings</h1><p class="sub">Test runs whyagent needed to find and prove the guilty edit inside the agent session (pruning, bisect, confirm), with Graph pruning on vs plain bisect. Precheck and commit search cost the same either way and are left out. Logged in Tiger Data.</p>`;
+let h = `<h1>Graph pruning savings</h1><p class="sub">Test runs agentwhy needed to find and prove the guilty edit inside the agent session (pruning, bisect, confirm), with Graph pruning on vs plain bisect. Precheck and commit search cost the same either way and are left out. Logged in Tiger Data.</p>`;
 if (!labels.length) {
-  h += `<div class="panel empty">No analyses logged yet. Run whyagent with <code>TIGER_DATABASE_URL</code> set, once normally and once with <code>--no-prune</code>.</div>`;
+  h += `<div class="panel empty">No analyses logged yet. Run agentwhy with <code>TIGER_DATABASE_URL</code> set, once normally and once with <code>--no-prune</code>.</div>`;
 } else {
   if (paired.length) {
     const b = sum("blind"), p = sum("pruned"), pct = b ? Math.round((b - p) / b * 100) : 0;

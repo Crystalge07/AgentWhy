@@ -229,7 +229,7 @@ def run_live(rc: RootCause, rp, model: Model, opts: LiveOptions, out: Callable[[
     p.line("")
     if after_ok:
         p.ok("rerun passed (unvalidated)")
-        p.line("One rerun isn't proof the rule works. Stage 8 tests it A/B: whyagent --root-cause … --lesson \"<rule>\"")
+        p.line("One rerun isn't proof the rule works. Stage 8 tests it A/B: agentwhy --root-cause … --lesson \"<rule>\"")
     else:
         p.out(f"   ✗ rerun still fails: {res.outcome.lower()}, {res.detail}")
     summary["after"] = {"outcome": res.outcome, "detail": res.detail, "files": list(changed),

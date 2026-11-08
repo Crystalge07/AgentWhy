@@ -10,7 +10,7 @@ RECS = [{"text": "Never lower shared config defaults.", "repo": "agentwhy/paymen
 
 def test_rules_newest_first_deduped_and_capped(tmp_path):
     md = rules_markdown(cwd=str(tmp_path), records=RECS)
-    assert md.startswith("## Rules from whyagent")
+    assert md.startswith("## Rules from agentwhy")
     lines = [ln for ln in md.splitlines() if ln.startswith("- ")]
     assert lines == ["- never lower shared config defaults",
                      "- Keep a method's old default; add the new behaviour under a new name. _(from a/b)_"]
@@ -19,7 +19,7 @@ def test_rules_newest_first_deduped_and_capped(tmp_path):
 
 
 def test_rules_skip_what_agents_md_already_has(tmp_path):
-    (tmp_path / "AGENTS.md").write_text("## Rules from whyagent\n\n- Never lower shared config defaults.\n")
+    (tmp_path / "AGENTS.md").write_text("## Rules from agentwhy\n\n- Never lower shared config defaults.\n")
     md = rules_markdown(cwd=str(tmp_path), records=RECS)
     assert "config defaults" not in md and "old default" in md
     assert rules_markdown(cwd=str(tmp_path), records=[]) == ""

@@ -6,7 +6,8 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-SECTION = "## Rules from whyagent"
+SECTION = "## Rules from agentwhy"
+OLD_SECTION = "## Rules from whyagent"  # files written before the rename
 
 
 def _norm(text: str) -> str:
@@ -22,18 +23,18 @@ def has_rule(text: str, rule: str) -> bool:
 def provenance(test: str, session_id: str, step_id: int, file: str) -> str:
     m = re.search(r"\S+::\S+", test)
     test = m[0] if m else test
-    return (f"<!-- whyagent: test={test} session={session_id[:8]} edit=#{step_id} ({file}) "
+    return (f"<!-- agentwhy: test={test} session={session_id[:8]} edit=#{step_id} ({file}) "
             f"{date.today().isoformat()} -->")
 
 
 def append_rule(path: str | Path, rule: str, comment: str) -> bool:
-    """Append `rule` (with its provenance comment) under the whyagent section. False if it's already there."""
+    """Append `rule` (with its provenance comment) under the agentwhy section. False if it's already there."""
     p = Path(path)
     text = p.read_text(encoding="utf-8") if p.exists() else ""
     if has_rule(text, rule):
         return False
     add = ""
-    if SECTION not in text:
+    if SECTION not in text and OLD_SECTION not in text:
         add += ("\n" if text and not text.endswith("\n") else "") + ("\n" if text else "") + SECTION + "\n"
     elif not text.endswith("\n"):
         add += "\n"

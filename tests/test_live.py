@@ -85,7 +85,7 @@ def test_live_loop_on_mock_end_to_end(repo, monkeypatch, no_brain):
                                 "files": ["app.py"], "label": "rerun passed (unvalidated)"}
     text = (repo / "AGENTS.md").read_text()
     assert text.count(SECTION) == 1 and f"- {RULE}" in text
-    assert "<!-- whyagent: test=" in text and "session=sess1234 edit=#2 (app.py)" in text
+    assert "<!-- agentwhy: test=" in text and "session=sess1234 edit=#2 (app.py)" in text
     for stage in ("1/6 diagnose", "2/6 rule", "3/6 approve", "4/6 rewind", "5/6 rerun", "6/6 verify"):
         assert stage in out
     assert "rerun passed (unvalidated)" in out
@@ -179,3 +179,13 @@ def test_cli_flag_checks():
         main(["--live", "--trail", "--test", "x", "--good", "y"])
     with pytest.raises(SystemExit):
         main(["--model", "mock", "--test", "x", "--good", "y"])
+
+
+def test_append_rule_reuses_a_section_written_before_the_rename(tmp_path):
+    from whyagent.live.instructions import OLD_SECTION
+
+    p = tmp_path / "AGENTS.md"
+    p.write_text(f"{OLD_SECTION}\n\n- Old rule.\n", encoding="utf-8")
+    assert append_rule(p, "New rule.", "<!-- c -->")
+    text = p.read_text(encoding="utf-8")
+    assert SECTION not in text and text.count(OLD_SECTION) == 1 and "- New rule." in text

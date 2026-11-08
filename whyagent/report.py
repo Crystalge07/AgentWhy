@@ -321,7 +321,7 @@ def build_view(d: dict, db: dict | None = None) -> dict:
         pass
     good, head = (m.get("good") or "")[:7], (m.get("head") or "")[:7]
     command = m.get("command") or " ".join(
-        ["whyagent", "--test", shlex.quote(m.get("test", ""))] + (["--good", good] if good else [])
+        ["agentwhy", "--test", shlex.quote(m.get("test", ""))] + (["--good", good] if good else [])
         + (["--line", m["line"]] if m.get("line") else []))
     report = {
         "id": aid, "repo": m.get("repo") or "", "range": f"{good}..{head}" if good or head else "", "when": when,
