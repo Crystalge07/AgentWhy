@@ -758,6 +758,7 @@ async function startReplay() {
   $("#pause").onclick = togglePause; $("#restart").onclick = restart;
   document.addEventListener("keydown", e => { if (e.key === " ") { e.preventDefault(); togglePause(); } if (e.key === "r") restart(); });
   label();
+  if (new URLSearchParams(location.search).has("play")) togglePause();  // ?replay=1&play: start without a click
 }
 function step() {
   clearTimeout(timer);

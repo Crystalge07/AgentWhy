@@ -234,7 +234,7 @@ whyagent --good f39623e --line payments/client.py:39 --workers 4   --test "pytho
 
 - `/live/<id>` follows a run as it happens (Server-Sent Events from its `events.jsonl`).
 - `/live/<id>?replay=1` plays a finished run back from its saved events (gaps capped at 3 s, a beat after each
-  result; pause, restart, 1×/2×/4×, Space and R keys). Fallback for bad Wi-Fi, a down VM or no model quota.
+  result; Play/Continue, Pause and Restart, Space and R keys; it waits for Play, or add `&play` to start at once). Fallback for bad Wi-Fi, a down VM or no model quota.
   If you show a replay to judges, say it's a recorded run.
 - On the Vultr VM the server listens on 127.0.0.1 only: run `whyagent --serve` there and tunnel it with
   `ssh -L 8700:127.0.0.1:8700 root@<vm-ip>`, then open http://127.0.0.1:8700/live on the laptop.
