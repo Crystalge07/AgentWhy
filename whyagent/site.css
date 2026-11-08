@@ -43,16 +43,16 @@
   color-scheme: dark;
 }
 
-/* light/dark switch: an emoji button in the bottom-right corner of every page */
-.theme-fab { position: fixed; right: 16px; bottom: 16px; z-index: 100; width: 44px; height: 44px; border-radius: 50%;
-             border: 1px solid var(--line-2); background: var(--paper); box-shadow: 0 4px 14px var(--shadow, rgba(0,0,0,.12));
-             cursor: pointer; padding: 0; font-size: 21px; line-height: 1; display: grid; place-items: center; transition: transform .15s; }
-.theme-fab:hover { transform: scale(1.08); }
-.theme-fab .sun, :root[data-theme="dark"] .theme-fab .moon { display: none; }
-:root[data-theme="dark"] .theme-fab .sun { display: inline; }
+/* light/dark switch: in the top bar, right of "Built with", behind a divider; line icons like the rest */
+.theme-btn { height: 100%; margin-left: 8px; padding: 0 4px 0 14px; border: 0; border-left: 1px solid var(--line);
+             background: none; color: var(--muted); cursor: pointer; display: flex; align-items: center; }
+.theme-btn:hover { color: var(--ink); }
+.theme-btn svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.theme-btn .sun, :root[data-theme="dark"] .theme-btn .moon { display: none; }
+:root[data-theme="dark"] .theme-btn .sun { display: block; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .theme-fab .moon { display: none; }
-  :root:not([data-theme="light"]) .theme-fab .sun { display: inline; }
+  :root:not([data-theme="light"]) .theme-btn .moon { display: none; }
+  :root:not([data-theme="light"]) .theme-btn .sun { display: block; }
 }
 
 /* ---------------------------------------------------------------- top bar (same on every page) */
@@ -82,6 +82,7 @@
   .site-bar { padding: 0 16px; gap: 10px; }
   .site-nav > a, .site-menu > button { padding: 0 8px; font-size: 14px; }
   .site-menu { margin-left: 2px; padding-left: 4px; }
+  .theme-btn { margin-left: 2px; padding-left: 8px; }
 }
 
 /* ---------------------------------------------------------------- sponsor pages (/entire, /gemini, /tiger, /vultr)
