@@ -1,6 +1,6 @@
 # whyagent: presentation content
 
-Raw material for the HackTrent slides: an organized dump, not a finished deck. It assumes the whole pipeline works as designed (stages 0–8). Numbers marked **\*** are design targets or expected demo results; replace them with numbers from the final dry runs before presenting. Unmarked numbers come from real runs on the recorded sessions.
+Raw material for the HackTrent slides: an organized dump, not a finished deck. Updated 2026-11-07 evening: the whole pipeline (stages 0–8) has now run end to end with a real agent. Numbers marked **\*** are still targets or untested; unmarked numbers come from real runs on the recorded sessions.
 
 ---
 
@@ -78,7 +78,7 @@ A simple diagram: **Entire session → edits → experiments → proven root cau
 | 4 | Graph pruning | Drops edits the test can't reach (import graph), **verified with one run**, never trusted blindly |
 | 5 | Prefix bisect | Binary search over the agent's edits, in order, in parallel across sandboxes |
 | 6 | Confirm | Revert that one edit from the final code → test passes. Multiple causes → delta debugging (ddmin) |
-| 7 | Reasoning + lesson | Shows the agent's reasoning and the trigger (the error it saw). **Gemini** writes a one-sentence lesson; Brain is checked first for an existing one |
+| 7 | Reasoning + lesson | Shows the agent's reasoning and the trigger (the error it saw). **Gemini** writes a one-sentence lesson (Claude takes over if Gemini is down or out of quota); Brain is checked first for an existing one. Lessons may never tell the agent to edit tests |
 | 8 | Counterfactual reruns | The agent redoes the task from just before the bad edit, N times with the lesson and N times without, in sandboxes. **Fisher exact test**; save to Brain only if it's validated |
 
 **Rigor details (good for a "why trust it" slide):**
@@ -108,11 +108,25 @@ Disclosure for scenario 2: the user steered the agent toward editing `config.py`
 
 The agent *knew* the change would break a test and planned to edit the test. That's exactly what whyagent surfaces and what pinned tests defeat.
 
-**Lesson + rerun (expected demo result, run on scenario 1)\*:**
+**Lesson + rerun (real result, scenario 2b, Claude Code as the rerun agent, 8 runs per arm):**
 ```
-lesson: "Never change a public function's return contract to finish a feature; add a new function instead."
-rerun: without lesson 0/5 pass · with lesson 5/5 pass · p = 0.004 → VALIDATED, saved to Brain
+lesson: "When a task asks for different behaviour in one place, make it an option at that call site
+         (e.g. constructor arguments); never lower shared config defaults like MAX_RETRIES or TIMEOUT_S
+         that other code and tests rely on."
+rerun:  without lesson 0/8 pass · with lesson 7/8 pass · p = 0.0007 → VALIDATED, saved to Brain
 ```
+The whole analysis, stages 0–8 including 16 agent reruns on 4 workers, took **~2.7 minutes**.
+
+**Stage 8 is a real filter, not a rubber stamp.** Same bug, other runs:
+| Lesson | Runs/arm | Without → with | p | Verdict |
+| --- | --- | --- | --- | --- |
+| "Don't change a global default to satisfy one task; add a parameter, or update every test that relies on the old value." | 5 | 0/5 → 3/5 | 0.08 | PROMISING, not saved |
+| same | 8 | 0/8 → 5/8 | 0.013 | VALIDATED |
+| the specific call-site lesson above | 8 | 0/8 → 7/8 | 0.0007 | VALIDATED |
+
+A sharper lesson changes behaviour more, and the stats show it. With too few runs, a lesson that helps still isn't saved.
+
+**Story beat:** Gemini's very first lesson for this bug was *"Update or mock affected tests when changing global defaults."* That's the agent's original mistake (edit the test to make the change pass), written up as advice. We now forbid lessons that suggest editing tests, and pinned tests would have caught it anyway.
 
 ---
 
@@ -131,7 +145,15 @@ command: sed -i 's/^TIMEOUT_S = 10$/TIMEOUT_S = 2/; s/^MAX_RETRIES = 3$/MAX_RETR
 reasoning: "Lowering MAX_RETRIES globally will break the existing retry test …"
 test runs used: 6
 ```
-(Real output, lightly trimmed. Stage 7–8 lines for the demo come from scenario 1.) The tool also writes an **HTML report**: a session timeline, bisect probes, the guilty diff, reasoning, trigger, the pruning savings chart and rerun results.
+(Real output, lightly trimmed.) Stage 7–8 on the same bug:
+```
+lesson: When a task asks for different behaviour in one place, make it an option at that call site …
+rerun: claude-code · without 0/8 · with 7/8 · p = 0.0007 → VALIDATED, saved to Brain
+```
+
+**Visual output (good for a screenshot slide):**
+- **HTML report**: a story strip (the task, the decoy blame vs the real cause, the proof runs), a clickable timeline of every agent edit with its diff, reasoning and the error it was reacting to, and a **Run data** tab fed from Tiger Data (every test run and rerun, pruned vs blind cost).
+- **Results site** (`whyagent --serve`): every past analysis, plus a **live view** while one runs: a square per test run coloured by outcome, reruns split into the with-lesson and without-lesson arms filling in as they finish. A form starts new analyses from the browser.
 
 ---
 
@@ -143,8 +165,9 @@ test runs used: 6
 | Test runs to find the edit | ≤ 6 for 15 edits | **5–6** (stable); flaky: ~10 runs per state, sized from the failure rate |
 | Edits pruned before bisecting | measured | 4 of 7 (scenario 1), 2 of 5 (scenario 2), each verified with 1 run |
 | Fewer runs with pruning | measured | Measured in Tiger Data: 9 → 8 edit-level test runs across 2 bugs (−11%). Small on these short sessions; grows with session length\* |
-| Lessons statistically validated | ≥ 1 | 1\* (p = 0.004\*) |
-| End-to-end time per bug | < 5 min | \* |
+| Lessons statistically validated | ≥ 1 | **2** on scenario 2b (best: 0/8 → 7/8, p = 0.0007); a third was correctly held back as PROMISING |
+| End-to-end time per bug | < 5 min | **~2.7 min** for stages 0–8 with 16 agent reruns (4 workers, laptop) |
+| Agent tokens per Stage 8 | measured | ~1.8–2.9M tokens for 10–16 Claude Code reruns, logged per run |
 
 **Why it matters:**
 - **Proof, not vibes.** Every claim is backed by real test runs a human can re-run. That's essential as AI writes more of our code and we need audit trails.
@@ -152,21 +175,23 @@ test runs used: 6
 - **Agent memory that earns its place.** Brain only stores lessons that measurably change agent behaviour, which stops `AGENTS.md` bloat.
 - **Caught real agent behaviour:** in all three recordings the agent edited a test to make its change pass. Pinned tests caught it every time.
 - **Cheap:** binary search means a handful of test runs (5–6 for a stable bug), no LLM calls to find the cause, and agent tokens are only spent on reruns.
+- **Lessons that are actually tested:** a vague lesson scored PROMISING and wasn't saved; a specific one went from 0/8 to 7/8. That's the difference between a superstition in `AGENTS.md` and a rule that works.
 - **Works on real agent behaviour, not just tidy edits:** it traces edits made through shell commands (`sed -i`, `git checkout --`) back to the agent's decision.
 
 ---
 
 ## 8. Tech stack
 
-- **Python 3.10+** CLI (`whyagent`), ~2.8k lines, 66 tests
+- **Python 3.10+** CLI (`whyagent`), ~4.9k lines, 106 tests, standard-library web server for the results site
 - **Entire**: session transcripts plus checkpoint trailers (input data), the session → commit link, Brain (lesson memory)
 - **Git**: blame, bisect, worktrees (states are built in throwaway worktrees, never on your branches)
 - **Docker**: one image per analysis, a throwaway container per test run, network off; worker pool for parallel runs
-- **Gemini** (`google-genai`): writes lessons; **Gemini CLI** is the default rerun agent (Claude Code headless also supported)
-- **Vultr** Cloud Compute: VM hosting the sandbox pool so bisect rounds and rerun arms run in parallel
+- **Gemini** (`google-genai`): first choice for every model call (lessons, live-loop rules); **Gemini CLI** can rerun the task
+- **Claude**: automatic fallback for every model call (`claude -p`); **Claude Code** headless is the rerun agent behind the real Stage 8 results
+- **Vultr** Cloud Compute: 8 vCPU VM for the sandbox pool, so bisect rounds and rerun arms run in parallel; every commit auto-syncs to it (`scripts/sync_vm.py`, Mac/Linux/Windows)
 - **Tiger Data** (TimescaleDB / Postgres, `psycopg`): hypertable of every test run and rerun, a continuous aggregate for the pruning-savings chart, and the **shared team Brain** (validated lessons, so every teammate's whyagent sees them)
 - **Stats**: one-sided Fisher exact test (no SciPy dependency)
-- **Report**: self-contained HTML report + JSON
+- **Report**: self-contained HTML report + JSON; `--serve` results site with a live view
 - **GoDaddy**: project domain
 - Cross-platform: developed on macOS and Windows
 
@@ -179,8 +204,8 @@ test runs used: 6
 | Track | What it does in whyagent | Why it isn't bolted on |
 | --- | --- | --- |
 | **Entire** (main) | Sessions + checkpoint trailers are the core input: commit → session → edits with reasoning and triggers. Graph-style pruning cuts test runs. Brain stores only validated lessons. **Trails:** `--trail` posts the proven root cause as a finding on the agent's trail, on the guilty line, with the revert attached as a one-click suggested patch | Without Entire's commit-to-session link there's no edit-level blame at all |
-| **Gemini** | Writes the lesson from the trigger, reasoning, diff and failure; Gemini CLI reruns the task in both arms | The lesson is the hypothesis that the reruns test |
-| **Vultr** | Hosts the Docker worker pool; parallel bisect rounds (≈ log base (W+1) of n) and parallel rerun arms | Turns ~10 sequential agent reruns into a couple of minutes |
+| **Gemini** | First choice for writing the lesson from the trigger, reasoning, diff and failure (Claude only steps in if Gemini fails); Gemini CLI can rerun the task in both arms | The lesson is the hypothesis that the reruns test |
+| **Vultr** | 8 vCPU VM for the Docker worker pool; parallel bisect rounds (≈ log base (W+1) of n) and parallel rerun arms. Code auto-syncs on every commit | 16 agent reruns took ~2.7 min on 4 workers; more cores = more parallel arms |
 | **Tiger Data** | Logs every run (stage, state hash, outcome, duration, tokens) in a hypertable; continuous aggregate → runs/tokens per stage, pruned vs blind; stores the team's validated lessons (shared Brain) | It's the evidence for the token-savings claim, and the team's shared memory |
 | **GoDaddy** | Domain for the project | n/a |
 
@@ -208,7 +233,7 @@ test runs used: 6
 - **Auto-regenerate lessons** that test as ineffective, and retest them.
 - **Mid-session memory replay:** resume reruns from the agent's exact context instead of a summary.
 - **Non-test failure signals:** type checkers, linters, security scanners, perf regressions.
-- **Web dashboard** of root causes and lesson win rates over time.
+- **Hosted team dashboard**: the `--serve` site is localhost-only today; a shared one would show root causes and lesson win rates across the team over time.
 
 ---
 
@@ -218,6 +243,10 @@ test runs used: 6
 - The rerun agent may differ from the original (e.g. Gemini CLI rerunning a Claude session). Both arms use the same agent, so the comparison is fair, and the report says which agent ran.
 - Earlier states run with HEAD's dependencies; the report flags sessions that touched dependency files.
 - Pruning uses a static import graph; it's always verified with a run, so a miss costs one run, never a wrong answer.
+- Stage 8 has run with a real agent on scenario 2b only so far. The validated lessons were passed in with `--lesson` rather than written by Stage 7 in the same run; Gemini's own first lesson for 2b wasn't usable (it suggested editing tests).
+- Reruns cost real tokens: ~2.5M for 16 Claude Code reruns.
+- The recorded results ran on a laptop; the Vultr VM is set up and synced but hasn't produced the demo numbers.
+- Scenario 2's agent was steered toward `config.py` by the user (disclosed; it's in the transcript).
 
 ---
 

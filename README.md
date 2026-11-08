@@ -16,7 +16,7 @@ python3 -m venv .venv                    python -m venv .venv
 .venv/bin/whyagent --check-entire        .venv\Scripts\whyagent --check-entire
 ```
 
-Needs git, Docker (default sandbox), and the Entire CLI with `entire enable --agent claude-code` run in the analyzed repo. Optional env vars (put them in `.env`, never in committed files): `GEMINI_API_KEY` (Stage 7 lesson + Gemini CLI reruns), `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude Code reruns; the token comes from `claude setup-token` and runs on a Claude subscription), `TIGER_DATABASE_URL` (run log, chart, shared Brain). Infra (Vultr VM, Tiger Data): `docs/setup.md`.
+Needs git, Docker (default sandbox), and the Entire CLI with `entire enable --agent claude-code` run in the analyzed repo. Optional env vars (put them in `.env`, never in committed files): `GEMINI_API_KEY` (Stage 7 lesson + Gemini CLI reruns), `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (Claude Code reruns, and the fallback for every model call when Gemini is missing, out of quota or errors; the token comes from `claude setup-token` and runs on a Claude subscription), `TIGER_DATABASE_URL` (run log, chart, shared Brain). Infra (Vultr VM, Tiger Data): `docs/setup.md`.
 
 ## Usage
 
@@ -83,7 +83,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | 4 Pruning | Drops edits the test can't import, always verified with one run |
 | 5 Bisect | Prefix bisect over the agent's edits, in parallel on the worker pool |
 | 6 Confirm | Reverts the edit from the final state → test passes. ddmin if there's more than one cause |
-| 7 Lesson | Brain first; otherwise Gemini writes a one-sentence lesson from the reasoning, trigger and diff (or `--lesson`) |
+| 7 Lesson | Brain first; otherwise the model (Gemini first, Claude as fallback) writes a one-sentence lesson from the reasoning, trigger and diff, or you pass `--lesson`. Lessons never suggest editing tests |
 | 8 Reruns | The agent redoes the task from just before the bad edit, with vs without the lesson; Fisher exact test; saved to Brain only if validated |
 
 ### Live loop (`--live`)
@@ -104,14 +104,20 @@ WHYAGENT_MODEL=mock whyagent --live --yes --root-cause .whyagent/s2b/root_cause.
 
 Any failed stage prints `✗ live loop failed at <stage>: <why>` and exits 2 (1 if the rerun still fails). `--live` never reads or writes Brain, and turns off the Tiger run log, so it needs no network on the mock.
 
- (same signature as HEAD) or `OTHER` (never evidence). Test files are pinned to HEAD in every state, so an agent that edited a test can't hide the bug.
+Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD) or `OTHER` (never evidence). Test files are pinned to HEAD in every state, so an agent that edited a test can't hide the bug.
 
-## Status (2026-11-07)
+### Results site (`--serve`)
 
-- **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 85 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
-- **Stages 7–8 are wired and unit-tested, but not yet run end to end with a real model.** Blocked on a Gemini key with quota or an Anthropic API key. `--lesson` lets Stage 8 run without Gemini; `--rerun-agent stub` rehearses it with no model at all.
-- **Live loop (`--live`) verified end to end on the mock** on scenario 2b in the Docker sandbox (~12 s). The mock only covers 2b; with Gemini it's untested (no key).
-- **Not tried yet:** Vultr VM, the worker pool with more than 2 workers on real sessions, the egress proxy outside the tests.
+`whyagent --serve` opens a localhost site listing every analysis in `.whyagent/history`, newest first (the list refreshes on its own). A running analysis shows a live view: the CLI's lines plus a square per test run, coloured by outcome, and reruns split into the with-lesson and without-lesson arms. Finished analyses show their full report. A form starts new analyses (rerun agent defaults to Claude Code). Analyses started from the terminal show up too, since both write the same history folder.
+
+## Status (2026-11-07, evening)
+
+- **Stages 0–6 verified end to end** on all three recorded scenarios in the Docker sandbox, on both macOS and Windows: scenario 1 (5 runs), 2b (6 runs, blame NOT the cause), 3 (flaky, 19–44 runs). 106 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
+- **Stages 0–8 verified end to end with a real agent** on scenario 2b: Claude Code reruns, 8 per arm, 4 workers. Best result: without the lesson 0/8 pass, with it 7/8, p = 0.0007 → **VALIDATED** and saved to Brain, in ~2.7 min total (~2.5M rerun tokens). A vaguer lesson scored 0/8 vs 5/8 (p = 0.013, validated); at 5 runs per arm, 0/5 vs 3/5 was only PROMISING (p = 0.08). The validated lessons were passed with `--lesson`.
+- **Model calls go Gemini first, Claude second** (`whyagent/providers.py`): if Gemini isn't configured, is out of quota or errors, the call goes to Claude and Gemini isn't retried for the rest of the run. Reports and Tiger record which provider answered. Gemini's first lesson on 2b suggested editing the tests, so the lesson prompt now forbids that.
+- **Live loop (`--live`) verified end to end on the mock** on scenario 2b in the Docker sandbox (~12 s). With a real model it's untested.
+- **Vultr VM** (8 vCPU) is set up and every commit auto-syncs to it (`scripts/sync_vm.py`, see `docs/setup.md`); the recorded results above ran on a laptop.
+- **Not tried yet:** more than 4 workers on real sessions, the egress proxy outside the tests, a Stage 8 run on scenario 1 or 3 with a real agent.
 - Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a local JSONL store (`~/.whyagent/brain.jsonl` or `WHYAGENT_BRAIN`) mirrored to a `lessons` table in Tiger Data, so validated lessons are shared across the team.
 - `whyagent --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
 
@@ -128,10 +134,15 @@ Any failed stage prints `✗ live loop failed at <stage>: <why>` and exits 2 (1 
 | `whyagent/replay/` | B | Worktree builds, pinned tests, signatures, cache, Docker sandbox, worker pool, flaky voting, rerun egress proxy |
 | `whyagent/tiger.py`, `chart.py` | B | Tiger Data run log + pruning chart |
 | `whyagent/rerun/` | B | Stage 7 Gemini lesson, Stage 8 rerun harness (Gemini CLI or Claude Code in Docker; tamper + regression checks), Fisher test + verdict |
-| `whyagent/report.py`, `report.html` | A | JSON + self-contained HTML report |
-| `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini or mock |
+| `whyagent/report.py`, `report_template.html` | A + B | `report.json` + self-contained HTML report (Report tab + Tiger Data run-data tab), built from real pipeline data |
+| `whyagent/server.py`, `app.html`, `events.py` | B | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
+| `whyagent/trail.py` | A | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
+| `whyagent/providers.py` | A + B | Gemini first, Claude fallback for every model call; records which provider answered |
+| `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
 | `whyagent/live/` | B | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |
 | `whyagent/cli.py` | A + B | Wires stages 0–8 |
 | `demo/check_seeded.py` | A | Checks the seeded demo repo can still produce each bug |
+| `demo/preflight.py` | B | One-shot demo preflight: infra, sessions, pipeline, stub Stage 8 |
+| `scripts/sync_vm.py` | B | Copies committed code to the Vultr VM (optional post-commit hook) |
 
 **A, Find the cause** (Anton): stages 1–6, Entire, the demo repo, scenarios 1 and 3. **B, Prove the fix** (Crystal): sandbox, stages 0, 7, 8, Vultr, Tiger Data, Gemini, scenario 2. See the PRD's team-split section.
