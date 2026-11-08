@@ -4,19 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>whyagent results</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
 <style>
-  /* Same tokens and parts as the report page (report_template.html). */
-  :root {
-    --bg: #fcfcfb; --paper: #ffffff; --line: #e7e7e2; --line-2: #d6d6cf;
-    --ink: #121211; --ink-2: #3d3d3a; --muted: #6e6e68; --faint: #a3a39c;
-    --hi: #eef36a;
-    --pass: #1f8a70; --fail: #e0592a; --other: #8a6fd1; --blame: #a86b12; --pruned: #3a5bd9;
-    --sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
+  /* Tokens and fonts come from /site.css, shared with every page. */
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
@@ -55,7 +45,7 @@
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .scroll { overflow-x: auto; margin-top: 24px; }
   tr.link { cursor: pointer; }
-  tr.link:hover td { background: #fafaf6; }
+  tr.link:hover td { background: var(--bg); }
   .dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; vertical-align: 1px; border-radius: 50%; }
   .st { font-family: var(--mono); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .st.done { color: var(--pass); } .st.running, .st.starting { color: var(--ink); } .st.stopped, .st.failed { color: var(--fail); }
@@ -96,7 +86,7 @@
   .stages tr.waiting td { color: var(--faint); }
   .stages tr.running td.name::after { content: " · running"; font-weight: 400; color: var(--muted); }
   .badge { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px; border: 1px solid; white-space: nowrap; }
-  .badge.done { color: var(--pass); border-color: #a9d6c8; }
+  .badge.done { color: var(--pass); border-color: var(--pass); }
   .badge.running { color: var(--ink); border-color: var(--ink); }
   .badge.waiting, .badge.skipped { color: var(--faint); border-color: var(--line-2); }
   .runs { display: inline-flex; gap: 3px; flex-wrap: wrap; vertical-align: middle; }
@@ -107,18 +97,14 @@
 </head>
 <body>
 <div class="frame">
-  <nav class="bar" aria-label="Site navigation">
-    <a class="logo" href="/">whyagent <span>results</span></a>
-    <div class="tabs"><a class="tab" href="/" id="navAll">All results</a></div>
-    <div class="spacer"></div>
-    <button class="btn" id="newBtn" type="button">New analysis</button>
-  </nav>
+  <!--site-bar-->
 
   <!-- ===================== LIST ===================== -->
   <main id="view-list" class="hidden">
     <section class="row">
       <div class="head">
         <div><h1>Results</h1><p>Every analysis in this repo, newest first. Runs started from the terminal show up here too.</p></div>
+        <button class="btn" id="newBtn" type="button">New analysis</button>
       </div>
       <form class="form hidden" id="form" autocomplete="off">
         <div class="full"><label for="fTest">Test command (exit 0 = pass)</label><input type="text" id="fTest" placeholder="python -m pytest -q tests/test_client.py::test_retries_server_errors_then_succeeds" required></div>
@@ -193,7 +179,7 @@ async function loadList() {
         : r.status === "stopped" ? `<span class="muted">Stopped before it finished.</span>` : `<span class="muted">In progress…</span>`;
       const st = failed ? "failed" : r.status;
       const live = r.status === "running" || r.status === "starting";
-      return `<tr class="link" data-id="${esc(r.id)}"${fresh.includes(r.id) ? ' style="background:#fbfcef"' : ""}><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span>${live ? `<div><a href="/a/${esc(r.id)}" style="font-size:12.5px">watch live</a></div>` : ""}</td>
+      return `<tr class="link" data-id="${esc(r.id)}"${fresh.includes(r.id) ? ' style="background:#fbfce6"' : ""}><td><span class="st ${st}">${failed ? "no cause" : label[r.status]}</span>${live ? `<div><a href="/a/${esc(r.id)}" style="font-size:12.5px">watch live</a></div>` : ""}</td>
         <td><code title="${esc(r.testId)}">${esc(r.test || r.id)}</code><div class="muted" style="font-size:12.5px">${esc(r.repo)} · ${esc(r.id)}</div></td>
         <td>${result}</td><td>${esc(r.mode || "-")}</td><td class="num">${r.runs ?? "-"}</td><td class="muted" style="white-space:nowrap">${esc(ago(r.when))}</td></tr>`;
     }).join("") + "</tbody></table></div>";
@@ -344,7 +330,6 @@ if (route) {
   setInterval(() => { if (!S.done && S.status !== "stopped") renderLive(S.status || "starting"); }, 1000);  // keep the clock moving between events
 } else {
   $("#view-list").classList.remove("hidden");
-  $("#navAll").setAttribute("aria-current", "page");
   if (location.hash === "#new") { $("#form").classList.remove("hidden"); history.replaceState(null, "", "/"); }
   loadList();
   setInterval(loadList, 2000);  // new runs (terminal or form) and status changes appear on their own

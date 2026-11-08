@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whyagent · Gemini</title>
+<link rel="stylesheet" href="/site.css">
+<style>
+  .big-lesson { font-size: 24px; font-weight: 500; line-height: 1.4; max-width: 980px; margin: 18px 0 0; }
+  .big-lesson::before { content: "“"; color: var(--muted); } .big-lesson::after { content: "”"; color: var(--muted); }
+  .by { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .arms { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+  .arm { display: grid; grid-template-columns: 170px auto 1fr; gap: 14px; align-items: center; }
+  .arm b { font-weight: 500; font-size: 15px; }
+  .runs { display: flex; gap: 5px; flex-wrap: wrap; }
+  .runs i { width: 30px; height: 30px; display: grid; place-items: center; font: 600 14px var(--sans); font-style: normal; border: 1.5px solid; }
+  .runs i.p { color: var(--pass); border-color: var(--pass); background: var(--pass-bg); }
+  .runs i.f { color: var(--fail); border-color: var(--fail); background: var(--fail-bg); }
+  .runs i.o { color: var(--other); border-color: var(--other); background: var(--other-bg); }
+  .arm .n { font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .verdict { margin-top: 18px; font-size: 15px; color: var(--ink-2); }
+  .verdict b { font-weight: 600; color: var(--pass); }
+  @media (max-width: 700px) { .arm { grid-template-columns: 1fr; gap: 6px; } }
+</style>
+</head>
+<body class="sponsor">
+<!--site-bar-->
+<main>
+  <div>
+    <h1>Gemini turns a proven mistake into a rule</h1>
+    <p class="lede">Finding the edit that broke the test is half the job. The other half is making sure no agent makes that mistake again.
+      Once the cause is proven, Gemini reads the agent's reasoning, the error it was reacting to and the bad edit, and writes a one-sentence
+      lesson. whyagent then tests that lesson on fresh agents before it's allowed into anyone's rulebook.</p>
+  </div>
+
+  <section class="card">
+    <h2>Where Gemini is used in the pipeline</h2>
+    <div class="sub">Every model call in whyagent goes to Gemini first. The steps before this are all real test runs, so no model ever decides the cause.</div>
+    <ol class="steps">
+      <li><i>Write a lesson</i><b>Check saved lessons first</b><span>If a proven lesson for this file and error is already in Tiger Data, it's reused and Gemini isn't called.</span></li>
+      <li><i>Write a lesson</i><b>Write the rule</b><span>Gemini (<code>gemini-flash-latest</code>) gets the agent's reasoning, the error it saw and the diff of the proven edit, and writes one rule. Rules may never tell an agent to edit the tests.</span></li>
+      <li><i>Test the lesson</i><b>Rerun the task</b><span>Fresh agents get the same task from just before the bad edit, half with the rule and half without. The Gemini CLI is one of the two agents that can do these reruns.</span></li>
+      <li><i>Answer</i><b>Keep it only if it works</b><span>The rule is saved only if agents with it do measurably better (Fisher's exact test). Then every new agent session starts with it.</span></li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>From the latest analysis</h2>
+    <div class="sub">The lesson on the newest finished analysis in this repo, and how fresh agents did with and without it.</div>
+    <div id="latest"><p class="sub" style="margin-top:14px">Loading…</p></div>
+  </section>
+
+  <section class="card">
+    <h2>If Gemini is unavailable</h2>
+    <div class="without">
+      <b>Claude takes over, and the report says so.</b>
+      <p>If <code>GEMINI_API_KEY</code> isn't set, the quota runs out or a call errors, the same prompt goes to Claude and Gemini isn't retried for the rest of
+        the run. The report and Tiger Data record which model wrote each lesson, so a result is never credited to the wrong one.</p>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const WHO = { gemini: "Written by Gemini", claude: "Written by Claude (Gemini was unavailable)", brain: "A saved lesson, reused from Tiger Data", given: "Written by hand for this run (--lesson)" };
+const VERDICT = { VALIDATED: "The lesson works: saved for every future agent.", PROMISING: "Looks helpful, but not by enough to be sure yet.",
+  INEFFECTIVE: "Didn't help, so it isn't saved.", NOT_NEEDED: "Agents already get this right without it, so there's nothing to save.", INCONCLUSIVE: "Too few reruns finished to compare." };
+const cell = o => `<i class="${o === "PASS" ? "p" : o === "OTHER" ? "o" : "f"}" title="${esc(o)}">${o === "PASS" ? "✓" : o === "OTHER" ? "?" : "✗"}</i>`;
+fetch("/api/latest").then(r => r.json()).then(d => {
+  if (d.error) { $("#latest").innerHTML = `<p class="sub" style="margin-top:14px">${esc(d.error)}</p>`; return; }
+  const L = d.lesson || {}, R = d.rerun || {};
+  const arm = (label, xs) => xs && xs.length ? `<div class="arm"><b>${label}</b><div class="runs">${xs.map(cell).join("")}</div>
+      <span class="n">${xs.filter(x => x === "PASS").length} of ${xs.length} fixed it</span></div>` : "";
+  $("#latest").innerHTML = L.text ? `
+    <p class="big-lesson">${esc(L.text)}</p>
+    <div class="by">${esc(WHO[L.source] || L.source)} · from edit ${esc(d.culprit.edit)} in <code>${esc(d.culprit.file)}</code> · <a href="/a/${encodeURIComponent(d.id)}">full report</a></div>
+    ${R.a ? `<div class="arms">${arm("Without the lesson", R.a)}${arm("With the lesson", R.b)}</div>
+      <p class="verdict">${R.verdict === "VALIDATED" ? "<b>Validated.</b> " : ""}${esc(VERDICT[R.verdict] || R.verdict || "")}${R.p != null ? ` <span class="sub">p = ${Number(R.p).toPrecision(2)}, ${esc(R.agent || "")} reruns</span>` : ""}</p>` : ""}`
+    : `<p class="sub" style="margin-top:14px">This analysis stopped at the root cause, before writing a lesson.</p>`;
+}).catch(() => { $("#latest").innerHTML = `<p class="err">Couldn't reach the whyagent server.</p>`; });
+</script>
+</body>
+</html>
