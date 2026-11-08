@@ -227,9 +227,10 @@ _CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/>
 # Light/dark: the saved choice is applied in <head> before first paint; with none saved the system theme wins.
 THEME_HEAD = ("<script>try{const t=localStorage.getItem('agentwhy-theme');"
               "if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>")
-THEME_TOGGLE = (  # bottom-right corner of every page: shows the theme you'd switch to
-    '<button type="button" class="theme-fab" aria-label="Switch light or dark theme" title="Light or dark">'
-    '<span class="moon">🌙</span><span class="sun">☀️</span></button>'
+THEME_TOGGLE = (  # in the top bar, right of "Built with": shows the theme you'd switch to
+    '<button type="button" class="theme-btn" aria-label="Switch light or dark theme" title="Light or dark">'
+    '<svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>'
+    '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>'
     "<script>document.currentScript.previousElementSibling.onclick=()=>{const r=document.documentElement,"
     "d=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches,t=d?'light':'dark';"
     "r.dataset.theme=t;try{localStorage.setItem('agentwhy-theme',t)}catch(e){}}</script>")
@@ -244,11 +245,11 @@ def site_bar(current: str, extra: str = "") -> str:
     return (f'<header class="site-bar"><a class="site-logo" href="/live">agent<i>why</i></a>{extra}<span class="site-sp"></span>'
             f'<nav class="site-nav" aria-label="Site"><a href="/live"{cur("live")}>Pipeline</a><a href="/"{cur("results")}>Results</a>'
             f'<div class="site-menu{menu_cur}"><button type="button" aria-expanded="false" aria-haspopup="true">Built with{_CHEVRON}</button>'
-            f'<div class="site-menu-list" hidden>{items}</div></div></nav></header>'
+            f'<div class="site-menu-list" hidden>{items}</div></div>{THEME_TOGGLE}</nav></header>'
             "<script>(()=>{const m=document.currentScript.previousElementSibling.querySelector('.site-menu'),b=m.querySelector('button'),"
             "l=m.querySelector('.site-menu-list'),set=o=>{l.hidden=!o;b.setAttribute('aria-expanded',o)};"
             "b.onclick=e=>{e.stopPropagation();set(l.hidden)};document.addEventListener('click',e=>{if(!m.contains(e.target))set(false)});"
-            "document.addEventListener('keydown',e=>{if(e.key==='Escape')set(false)})})()</script>" + THEME_TOGGLE)
+            "document.addEventListener('keydown',e=>{if(e.key==='Escape')set(false)})})()</script>")
 
 
 def _page(name: str, current: str) -> str:
