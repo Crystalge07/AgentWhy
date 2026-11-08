@@ -368,3 +368,16 @@ def test_claude_code_agent_reads_instructions_file():
 
     assert "--append-system-prompt" not in agent_by_name("claude-code").command
     assert "$(cat AGENTS.md" in agent_by_name("claude-code", context_file="AGENTS.md").command
+
+
+def test_claude_code_that_never_ran_is_other_not_pass(monkeypatch):
+    """Claude Code refusing to start (e.g. as root without IS_SANDBOX) left the code untouched, which passes the
+    test; that must count as OTHER (not evidence), never as a PASS."""
+    from whyagent.rerun.harness import ClaudeCode
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "t")
+    agent = ClaudeCode()
+    assert agent.env["IS_SANDBOX"] == "1"
+    msg = "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons\n"
+    assert "didn't run" in agent.error(msg, 1) and "root" in agent.error(msg, 1)
+    ok = '{"type":"result","is_error":false,"num_turns":4,"result":"done"}'
+    assert agent.error(ok, 0) is None

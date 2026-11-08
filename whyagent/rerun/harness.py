@@ -136,7 +136,10 @@ class ClaudeCode(Agent):
             image_lines=_NODE_LINES[:-1] + [
                 _NODE_LINES[-1] + f" && npm install -g --no-fund --no-audit @anthropic-ai/claude-code@{version}"],
             env={**{k: os.environ[k] for k in _CLAUDE_AUTH if os.environ.get(k)},  # an empty key would shadow the other
-                 "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+                 "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                 # The sandbox runs as root on Windows and Linux hosts, and Claude Code refuses
+                 # --dangerously-skip-permissions as root unless it's told it is in a sandbox (it is).
+                 "IS_SANDBOX": "1"},
             allow=["api.anthropic.com"],
         )
 
@@ -151,6 +154,9 @@ class ClaudeCode(Agent):
                 return f"Claude Code error: {str(data.get('result') or data.get('subtype'))[:200]}"
         if not any(os.environ.get(k) for k in _CLAUDE_AUTH) and exit_code != 0:
             return "Claude Code error: set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`)"
+        if exit_code != 0 and not data:  # died before producing a result (refused to start, crashed): no work done
+            last = next((ln for ln in reversed(output.strip().splitlines()) if ln.strip()), f"exit {exit_code}")
+            return f"Claude Code didn't run: {last.strip()[:200]}"
         return super().error(output, exit_code)
 
     def tokens(self, output: str) -> int | None:
