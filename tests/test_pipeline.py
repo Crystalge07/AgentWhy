@@ -114,8 +114,7 @@ def test_decide_counts_any_target_failure():
 
 
 def test_parallel_bisect_on_worker_pool_and_tiger_flag(tmp_path):
-    """Same decoy case, with B's worker pool (3 sandboxes per bisect round) and a Tiger run log.
-    (Test by Crystal, from crystal/merge-find-the-cause.)"""
+    """Same decoy case, with the worker pool (3 sandboxes per bisect round) and a Tiger run log."""
     parent, g, steps, files = make_repo(tmp_path)
     cmd = f'"{sys.executable}" -m pytest -q -p no:cacheprovider tests/test_core.py::test_total'
     sig = Replayer(str(tmp_path), [], cmd).run(State(g, [], g))[0].signature

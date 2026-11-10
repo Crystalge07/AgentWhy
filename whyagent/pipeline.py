@@ -1,4 +1,4 @@
-"""Stages 2-6 (owner A): from the guilty commit's session to a proven root-cause edit.
+"""Stages 2-6: from the guilty commit's session to a proven root-cause edit.
 
 An edit is the root cause only if the test passes right before it, fails right after it, and
 passes again when that edit is reverted from the final code. Every stage here establishes one of

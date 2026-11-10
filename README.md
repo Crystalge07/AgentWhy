@@ -6,7 +6,7 @@
 
 The command is `agentwhy`. The Python package, its env vars (`WHYAGENT_*`) and its folders (`.whyagent/`) keep the old name `whyagent`, and the `whyagent` command still works, so existing scripts and hooks don't break.
 
-Full spec: `whyagent — PRD.md`. Demo repo and recordings: `docs/demo.md`. Presentation material: `docs/slides.md`.
+Full spec: `whyagent — PRD.md`. Example repos and recorded sessions: `docs/demo.md`.
 
 ## Setup
 
@@ -67,7 +67,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
 | `--brain` | List every validated lesson (Tiger Data) with its evidence, and exit |
 | `--rules` | Print the validated rules as Markdown for an agent's context (newest first, max `--rules-limit`, default 10; skips rules already in `--instructions`; Tiger timeout 3 s). Meant for a Claude Code `SessionStart` hook so every session, in any repo, starts with your account-wide rules |
-| `--install-hook` / `--uninstall-hook` | Add or remove the Claude Code `SessionStart` hook that runs `--rules`, in `--claude-config DIR`, `$CLAUDE_CONFIG_DIR` or `~/.claude`. Works on Mac and Windows. **Uninstall before recording a demo session**: the rules would steer the agent away from the mistake |
+| `--install-hook` / `--uninstall-hook` | Add or remove the Claude Code `SessionStart` hook that runs `--rules`, in `--claude-config DIR`, `$CLAUDE_CONFIG_DIR` or `~/.claude`. Works on Mac and Windows. **Uninstall before recording an example session**: the rules would steer the agent away from the mistake |
 | `--root-cause JSON` | Run stages 7–8 only, from a saved `root_cause.json` (pass `--test`) |
 | `--report PATH` / `--open` | Where to write the HTML report; open it when done |
 | `--render JSON` | Re-render a saved `report.json` to HTML |
@@ -75,9 +75,9 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--chart` | Write the Tiger Data pruning chart (`.whyagent/chart.html`) |
 | `--check-entire` | Smoke-test the Entire connection |
 | `--live` | After the root cause, run the live loop instead of stages 7–8 (see below). Works after a full analysis or with `--root-cause` |
-| `--yes` | `--live`: approve the rule without asking (scripted demo runs) |
+| `--yes` | `--live`: approve the rule without asking (scripted runs) |
 | `--instructions PATH` | `--live` / `--pr`: the agent instructions file the rule is added to (default `AGENTS.md`) |
-| `--model gemini\|claude\|mock` | Who writes the Stage 7 lesson (or, with `--live`, the rule). Default `$WHYAGENT_MODEL`, else `gemini`. `claude` runs `claude -p` with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` and `$WHYAGENT_CLAUDE_MODEL`, and makes `claude-code` the default rerun agent. `mock` = canned responses for the seeded demo repo (scenario 2b), no network, `--live` only |
+| `--model gemini\|claude\|mock` | Who writes the Stage 7 lesson (or, with `--live`, the rule). Default `$WHYAGENT_MODEL`, else `gemini`. `claude` runs `claude -p` with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` and `$WHYAGENT_CLAUDE_MODEL`, and makes `claude-code` the default rerun agent. `mock` = canned responses for the example repo (scenario 2b), no network, `--live` only |
 
 ## How it works
 
@@ -117,9 +117,9 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 
 `agentwhy --serve` opens a localhost site listing every analysis in `.whyagent/history`, newest first (the list refreshes on its own). A running analysis shows a live view: the CLI's lines plus a square per test run, coloured by outcome, and reruns split into the with-lesson and without-lesson arms. Finished analyses show their full report. A form starts new analyses (rerun agent defaults to Claude Code). Analyses started from the terminal show up too, since both write the same history folder.
 
-## Status (2026-11-08)
+## Tested so far
 
-- **Stages 0–6 verified end to end** in the Docker sandbox. payments-api-client's scenarios 1, 2b (blame NOT the cause) and 3 (flaky) ran on both macOS and Windows. payments-client's `scenario-1` (2 runs) and `scenario-2` (6 runs, blame NOT the cause) are recorded in `docs/demo.md`. 124 unit tests. `demo/preflight.py` rechecks infra, sessions, the pipeline and a stub Stage 8 in ~80 s (`--quick`: ~10 s).
+- **Stages 0–6 verified end to end** in the Docker sandbox. payments-api-client's scenarios 1, 2b (blame NOT the cause) and 3 (flaky) ran on both macOS and Windows. payments-client's `scenario-1` (2 runs) and `scenario-2` (6 runs, blame NOT the cause) are recorded in `docs/demo.md`.
 - **Stages 0–8 verified end to end with a real agent** (Claude Code reruns):
   - `scenario-1`: without the lesson 0/6 pass, with it 6/6, p = 0.001 → **VALIDATED**. `--pr` opened a PR on payments-client from a passing rerun's fix, re-verified at HEAD.
   - `scenario-2b-clean`: 0/8 vs 7/8, p = 0.0007 → **VALIDATED** (~2.7 min, ~2.5M rerun tokens). A vaguer lesson scored 0/8 vs 5/8 (p = 0.013); at 5 runs per arm, 0/5 vs 3/5 was only PROMISING (p = 0.08).
@@ -128,33 +128,29 @@ Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD
 - **Results site** (`--serve`, main page `/live`): light and dark themes. It follows the system theme, and the top bar's toggle overrides it and remembers the choice. Reports written by `--render` or a new analysis have the same toggle.
 - **Vultr VM** (8 vCPU) is set up and every commit auto-syncs to it (`scripts/sync_vm.py`, see `docs/setup.md`).
 - **Not tried yet:** more than 4 workers on real sessions, the egress proxy outside the tests, Stage 8 on the flaky scenario with a real agent.
-- Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a `lessons` table in Tiger Data, the only store (nothing is kept locally), so every teammate sees the same validated lessons and a lesson deleted there is gone for everyone. Saving needs `TIGER_DATABASE_URL`; without it the save fails loudly and lookups find nothing.
+- Entire Graph and Brain have no CLI access we found: pruning uses a static import graph (`whyagent/graph.py`), and Brain is a `lessons` table in Tiger Data, the only store (nothing is kept locally), so every machine sees the same validated lessons and a lesson deleted there is gone for everyone. Saving needs `TIGER_DATABASE_URL`; without it the save fails loudly and lookups find nothing.
 - `agentwhy --chart` pairs each bug's latest pruned and `--no-prune` analyses from Tiger and compares edit-level test runs (pruning, bisect, confirm).
 
 ## Layout
 
-| Module | Owner | What it does |
-| --- | --- | --- |
-| `whyagent/types.py` | shared | `Step` / `State` / `RunResult` / `RootCause` |
-| `whyagent/entire.py` | A | Entire CLI wrapper + connection check; Brain (`brain_lookup` / `brain_save`, Tiger Data only) |
-| `whyagent/adapters/` | A | Claude Code parser, multi-session merge, write hunks, replay fidelity, shell-edit attribution |
-| `whyagent/bisect/` | A | Dependency map, Stage 3 blame hint, prefix bisect (parallel, `--scan`), confirm, ddmin |
-| `whyagent/graph.py` | A | Stage 4 pruning from a static import graph, verified with one run |
-| `whyagent/pipeline.py` | A | Stages 2–6 end to end → `RootCause` (+ `root_cause.json`), pruning savings |
-| `whyagent/replay/` | B | Worktree builds, pinned tests, signatures, cache, Docker sandbox, worker pool, flaky voting, rerun egress proxy |
-| `whyagent/tiger.py`, `chart.py` | B | Tiger Data run log + pruning chart |
-| `whyagent/rerun/` | B | Stage 7 Gemini lesson, Stage 8 rerun harness (Gemini CLI or Claude Code in Docker; tamper + regression checks), Fisher test + verdict |
-| `whyagent/report.py`, `report_template.html` | A + B | `report.json` + self-contained HTML report (Report tab + Tiger Data run-data tab), built from real pipeline data |
-| `whyagent/server.py`, `app.html`, `events.py` | B | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
-| `whyagent/trail.py` | A | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
-| `whyagent/fix_pr.py` | B | The fix PR (on by default): pick a fix verified at HEAD (rerun's work or revert), commit it with the rule if validated, push a branch, `gh pr create` |
-| `whyagent/rules.py` | B | `--rules`: account-wide validated rules as Markdown for a SessionStart hook |
-| `whyagent/providers.py` | A + B | Gemini first, Claude fallback for every model call; records which provider answered |
-| `whyagent/model.py` | B | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
-| `whyagent/live/` | B | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |
-| `whyagent/cli.py` | A + B | Wires stages 0–8 |
-| `demo/check_seeded.py` | A | Checks the seeded demo repo can still produce each bug |
-| `demo/preflight.py` | B | One-shot demo preflight: infra, sessions, pipeline, stub Stage 8 |
-| `scripts/sync_vm.py` | B | Copies committed code to the Vultr VM (optional post-commit hook) |
-
-**A, Find the cause** (Anton): stages 1–6, Entire, the demo repo, scenarios 1 and 3. **B, Prove the fix** (Crystal): sandbox, stages 0, 7, 8, Vultr, Tiger Data, Gemini, scenario 2. See the PRD's team-split section.
+| Module | What it does |
+| --- | --- |
+| `whyagent/types.py` | `Step` / `State` / `RunResult` / `RootCause` |
+| `whyagent/entire.py` | Entire CLI wrapper + connection check; Brain (`brain_lookup` / `brain_save`, Tiger Data only) |
+| `whyagent/adapters/` | Claude Code parser, multi-session merge, write hunks, replay fidelity, shell-edit attribution |
+| `whyagent/bisect/` | Dependency map, Stage 3 blame hint, prefix bisect (parallel, `--scan`), confirm, ddmin |
+| `whyagent/graph.py` | Stage 4 pruning from a static import graph, verified with one run |
+| `whyagent/pipeline.py` | Stages 2–6 end to end → `RootCause` (+ `root_cause.json`), pruning savings |
+| `whyagent/replay/` | Worktree builds, pinned tests, signatures, cache, Docker sandbox, worker pool, flaky voting, rerun egress proxy |
+| `whyagent/tiger.py`, `chart.py` | Tiger Data run log + pruning chart |
+| `whyagent/rerun/` | Stage 7 Gemini lesson, Stage 8 rerun harness (Gemini CLI or Claude Code in Docker; tamper + regression checks), Fisher test + verdict |
+| `whyagent/report.py`, `report_template.html` | `report.json` + self-contained HTML report (Report tab + Tiger Data run-data tab), built from real pipeline data |
+| `whyagent/server.py`, `app.html`, `events.py` | `--serve` results site: history list, live view fed by `events.jsonl`, start-an-analysis form |
+| `whyagent/trail.py` | `--trail`: root cause as a finding on the Entire trail, with the revert as a suggested patch |
+| `whyagent/fix_pr.py` | The fix PR (on by default): pick a fix verified at HEAD (rerun's work or revert), commit it with the rule if validated, push a branch, `gh pr create` |
+| `whyagent/rules.py` | `--rules`: account-wide validated rules as Markdown for a SessionStart hook |
+| `whyagent/providers.py` | Gemini first, Claude fallback for every model call; records which provider answered |
+| `whyagent/model.py` | One interface for the live loop's model calls (rule + rerun agent): Gemini, Claude or mock |
+| `whyagent/live/` | Live loop: stages, rule evidence, `AGENTS.md` writer, mock agent + canned data |
+| `whyagent/cli.py` | Wires stages 0–8 |
+| `scripts/sync_vm.py` | Copies committed code to the Vultr VM (optional post-commit hook) |
