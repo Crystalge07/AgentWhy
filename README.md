@@ -22,7 +22,13 @@ Needs git, Docker (default sandbox), and the Entire CLI with `entire enable --ag
 
 ## Usage
 
-Run it inside the repo whose test broke. It needs one failing test and a commit where that test passes:
+Run it inside the repo whose test broke:
+
+```sh
+agentwhy
+```
+
+With no flags it guides you. It runs the suite at HEAD (in the sandbox), lists the failing tests, asks which one, and finds a commit where that test passes. It tries the commit just before the agent's Entire-checkpointed commits first, then HEAD~1, ~2, ~4, … up to HEAD~64. Then it shows the equivalent command and asks before starting. `agentwhy --test CMD` without `--good` finds the good commit the same way, without asking. You can also give both:
 
 ```sh
 agentwhy --good f39623e \
@@ -49,8 +55,8 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 
 | Flag | Meaning |
 | --- | --- |
-| `--test CMD` | Command that runs one failing test (exit 0 = pass). Required |
-| `--good SHA` | A commit where the test passes. Required |
+| `--test CMD` | Command that runs one failing test (exit 0 = pass). Omit it to be guided (needs a terminal) |
+| `--good SHA` | A commit where the test passes. Default: found by running the test on earlier commits |
 | `--line FILE:N` | The line the failure points at; used as the blame hint. Default: the deepest non-test frame in the pytest traceback |
 | `--setup CMD` | Setup command for the sandbox image (default: pytest, plus `requirements.txt` and/or `pip install -e .`) |
 | `--sandbox docker\|local` | Where tests run (default `docker`, network off). `local` runs on the host |
