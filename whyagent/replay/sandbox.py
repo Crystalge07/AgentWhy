@@ -54,10 +54,13 @@ class LocalSandbox:
 def docker_available() -> tuple[bool, str]:
     if not shutil.which("docker"):
         return False, "docker not found on PATH"
-    p = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture_output=True, **_ENC)
+    p = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}} {{.OSType}}"], capture_output=True, **_ENC)
     if p.returncode != 0:
         return False, "Docker daemon isn't running (start Docker Desktop)"
-    return True, f"Docker {p.stdout.strip()}"
+    version, _, os_type = p.stdout.strip().partition(" ")
+    if os_type and os_type != "linux":  # the sandbox images are Linux (python:*-slim)
+        return False, f"Docker runs {os_type} containers; switch Docker Desktop to Linux containers"
+    return True, f"Docker {version}"
 
 
 def _default_setup(files: set[str]) -> str:

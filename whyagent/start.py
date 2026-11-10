@@ -22,7 +22,7 @@ TEST_CMD = "{py} -m pytest -q -p no:cacheprovider {test}"
 
 def _py(sandbox) -> str:
     """`python` in the Docker image; on the host it may not be on PATH (macOS, Windows' Store stub)."""
-    return "python" if getattr(sandbox, "name", "") == "docker" else shlex.quote(sys.executable)
+    return "python" if getattr(sandbox, "name", "") == "docker" else f'"{sys.executable}"'  # cmd.exe: no '…'
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+::\S+)", re.MULTILINE)
 MAX_BACK = 64  # find_good gives up past HEAD~64
 
@@ -30,6 +30,11 @@ MAX_BACK = 64  # find_good gives up past HEAD~64
 def _git(*a) -> str:
     return subprocess.run(["git", *a], capture_output=True, encoding="utf-8", errors="replace",
                           check=True).stdout.strip()
+
+
+def _quote(arg: str) -> str:
+    """Quote for the shell the sandbox runs (cmd.exe on Windows hosts, sh elsewhere)."""
+    return subprocess.list2cmdline([arg]) if sys.platform == "win32" else shlex.quote(arg)
 
 
 def parse_failed(output: str) -> list[str]:
@@ -122,7 +127,7 @@ def guided(args, make_sandbox) -> bool:
             print("  c. enter a test command myself")
             pick = _ask("Which test? [1]: ", "1")
             if pick.isdigit() and 1 <= int(pick) <= len(failed):
-                args.test = TEST_CMD.format(py=_py(sandbox), test=shlex.quote(failed[int(pick) - 1]))
+                args.test = TEST_CMD.format(py=_py(sandbox), test=_quote(failed[int(pick) - 1]))
         else:
             print("No failing pytest tests found." + (f" Last lines:\n{tail}" if tail else ""))
         if not args.test:
@@ -142,7 +147,7 @@ def guided(args, make_sandbox) -> bool:
     print(f"agent commits in between: {len(agent)} with an Entire checkpoint" if agent else
           "note: no commit between good and HEAD has an Entire checkpoint, so there's no recorded agent session "
           "to explain (was `entire enable` run before the agent worked?)")
-    shown = f"agentwhy --test {shlex.quote(args.test)} --good {args.good[:7]}"
+    shown = f"agentwhy --test {_quote(args.test)} --good {args.good[:7]}"
     print(f"\nSame as: {shown}")
     print("Next: precheck → find the commit → find the edit → confirm → lesson → reruns → PR "
           f"(report: {args.report})")
