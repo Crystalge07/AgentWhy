@@ -143,12 +143,12 @@ def _why(rep: dict) -> str:
 
 def _spawn(results: Results, body: dict) -> str:
     test, good = (body.get("test") or "").strip(), (body.get("good") or "").strip()
-    if not test or not good:
-        raise ValueError("test and good commit are required")
+    if not test:
+        raise ValueError("a test command is required")
     aid = uuid.uuid4().hex[:12]
     folder = results.history / aid
     folder.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, "-m", "whyagent.cli", "--test", test, "--good", good, "--id", aid,
+    cmd = [sys.executable, "-m", "whyagent.cli", "--test", test, *(["--good", good] if good else []), "--id", aid,
            "--report", str(results.base / "report.html"), "--sandbox", body.get("sandbox") or "docker",
            "--workers", str(int(body.get("workers") or 2))]
     if (body.get("line") or "").strip():

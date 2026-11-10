@@ -121,11 +121,12 @@ CLAUDE_AUTH = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 def claude_missing() -> str | None:
     """Why claude_generate can't run, or None. A token is required on purpose: without one, `claude` would fall
     back to whichever account the host's default config is logged into."""
+    why = []  # both, so fixing one doesn't just reveal the other
     if not shutil.which("claude"):
-        return "the `claude` CLI isn't on PATH (npm install -g @anthropic-ai/claude-code)"
+        why.append("the `claude` CLI isn't on PATH (npm install -g @anthropic-ai/claude-code)")
     if not any(os.environ.get(k) for k in CLAUDE_AUTH):
-        return "set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY"
-    return None
+        why.append("set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY")
+    return "; ".join(why) or None
 
 
 def claude_generate(prompt: str, model: str | None = None, timeout: int = 180) -> str:

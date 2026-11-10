@@ -762,8 +762,9 @@ def main(argv=None) -> int:
     load_dotenv(find_dotenv(usecwd=True))
     load_dotenv()
     p = argparse.ArgumentParser(prog="agentwhy", description="Find which agent decision broke a test, and prove it.")
-    p.add_argument("--test", help="command that runs one failing test (exit 0 = pass)")
-    p.add_argument("--good", help="commit where the test passes")
+    p.add_argument("--test", help="command that runs one failing test (exit 0 = pass); omit it to be guided: "
+                   "agentwhy lists the failing tests and asks which one")
+    p.add_argument("--good", help="commit where the test passes (default: found by running the test on earlier commits)")
     p.add_argument("--line", help="file:line the failure points at (blame hint)")
     p.add_argument("--runs", type=int, default=5, help="reruns per arm (default 5)")
     p.add_argument("--setup", help="environment setup command, run once when building the sandbox image")
@@ -868,8 +869,15 @@ def main(argv=None) -> int:
         return cmd_chart(args)
     if args.root_cause:
         return cmd_root_cause(args)
-    if not (args.test and args.good):
-        p.error("--test and --good are required (or use --check-entire)")
+    from . import start
+    if not args.test:
+        if not sys.stdin.isatty():
+            p.error("--test is required when not run interactively (run plain `agentwhy` in a terminal to be "
+                    "guided)")
+        if not start.guided(args, _make_sandbox):
+            return 2
+    elif not args.good and not start.auto_good(args, _make_sandbox):
+        return 2
     return cmd_analyze(args)
 
 

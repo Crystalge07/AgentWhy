@@ -108,7 +108,7 @@
       </div>
       <form class="form hidden" id="form" autocomplete="off">
         <div class="full"><label for="fTest">Test command (exit 0 = pass)</label><input type="text" id="fTest" placeholder="python -m pytest -q tests/test_client.py::test_retries_server_errors_then_succeeds" required></div>
-        <div><label for="fGood">Good commit (the test passes here)</label><input type="text" id="fGood" placeholder="f39623e" required></div>
+        <div><label for="fGood">Good commit (optional: found automatically)</label><input type="text" id="fGood" placeholder="f39623e"></div>
         <div><label for="fLine">Failing line (optional)</label><input type="text" id="fLine" placeholder="payments/client.py:39"></div>
         <div><label for="fSandbox">Sandbox</label><select id="fSandbox"><option value="docker">Docker (isolated)</option><option value="local">Local (no isolation)</option></select></div>
         <div><label for="fAgent">Rerun agent</label><select id="fAgent"><option value="claude-code" selected>Claude Code</option><option value="gemini-cli">Gemini CLI (falls back to Claude)</option></select></div>
@@ -167,7 +167,7 @@ async function loadList() {
   const fresh = known ? rows.filter((r) => !known.has(r.id)).map((r) => r.id) : [];
   known = new Set(rows.map((r) => r.id));
   if (!rows.length) {
-    $("#list").innerHTML = `<p class="empty">No analyses yet. Start one with <b>New analysis</b>, or run <code>agentwhy --test … --good …</code> in this repo.</p>`;
+    $("#list").innerHTML = `<p class="empty">No analyses yet. Start one with <b>New analysis</b>, or run <code>agentwhy</code> in this repo.</p>`;
     return;
   }
   const label = { done: "done", running: "running", starting: "starting", stopped: "stopped" };

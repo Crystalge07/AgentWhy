@@ -43,8 +43,17 @@ class Fix:
     run_index: int | None = None
 
 
+def _run_git(cwd, *args, input: str | None = None) -> subprocess.CompletedProcess:
+    """git with `input` sent as UTF-8 bytes: in text mode Windows turns each \n written to stdin into \r\n,
+    and a CRLF patch doesn't apply to LF files."""
+    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
+                       input=None if input is None else input.encode("utf-8"))
+    return subprocess.CompletedProcess(p.args, p.returncode, p.stdout.decode("utf-8", "replace"),
+                                       p.stderr.decode("utf-8", "replace"))
+
+
 def _git(cwd, *args, input: str | None = None, check: bool = True) -> str:
-    p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", input=input)
+    p = _run_git(cwd, *args, input=input)
     if check and p.returncode != 0:
         raise FixError(f"git {args[0]} failed: {(p.stderr or p.stdout).strip()[:300]}")
     return p.stdout
@@ -85,8 +94,7 @@ def verify_at_head(rp, rr, rc: RootCause, patch: str) -> tuple[str | None, str]:
     tears it down — or (None, why it failed)."""
     d = rp.build(rc.head_state)
     try:
-        p = subprocess.run(["git", "apply", "--3way", "--whitespace=nowarn"], cwd=d, input=patch,
-                           capture_output=True, encoding="utf-8", errors="replace")
+        p = _run_git(d, "apply", "--3way", "--whitespace=nowarn", input=patch)
         if p.returncode != 0:
             raise _Reject("doesn't apply cleanly at HEAD")
         sb = rp.sandbox
