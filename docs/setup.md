@@ -42,5 +42,5 @@
    ```sh
    psql "$TIGER_DATABASE_URL" -f docs/tiger_schema.sql
    ```
-4. Python side: `pip install 'psycopg[binary]'`. `replay.run` calls `log_run(stage, state_hash, result)` for every test run; reruns log with `stage='rerun'` and `tokens` set. Make `log_run` a no-op when `TIGER_DATABASE_URL` is unset so tests and offline runs still work.
+4. Python side: `pip install 'psycopg[binary]'`. Every test run is logged to `runs` (`whyagent/tiger.py`, `RunLog`); reruns log with `stage='rerun'` and `tokens` set. With `TIGER_DATABASE_URL` unset, logging is off and everything else still works. agentwhy creates the tables itself if step 3 was skipped, but only the schema file adds the hypertable and the `runs_by_stage` view the chart needs.
 5. **The chart:** run the same analysis with and without `--no-prune` (each gets its own `analysis_id` and `pruned` flag), then query `runs_by_stage` in the Tiger console or a notebook.

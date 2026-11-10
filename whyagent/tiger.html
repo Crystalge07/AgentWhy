@@ -127,7 +127,7 @@ function render(d) {
     </section>
     <section class="card">
       <h2>Lessons that proved themselves</h2>
-      <div class="sub">Saved only when fresh agents with the lesson do measurably better than without it (Fisher's exact test, p &lt; 0.05).</div>
+      <div class="sub">Saved only when fresh agents with the lesson do measurably better than without it (Fisher's exact test, p &lt; 0.05, split across the lessons tried).</div>
       <div class="col" style="margin-top:14px">${d.lessons.rows.map(l => `
         <div class="lesson"><q>${esc(l.text)}</q>
           <div class="ab"><span>Without lesson ${l.a_pass}/${l.a_n}<span class="bar"><i style="width:${l.a_n ? 100 * l.a_pass / l.a_n : 0}%;background:${css("--c-fail")}"></i></span></span>

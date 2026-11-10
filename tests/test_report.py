@@ -42,7 +42,7 @@ E       payments.client.ApiError: GET /invoices/inv_001: gave up after 1 attempt
 payments/client.py:39: ApiError
 =========================== short test summary info ============================
 """
-    assert line_from_traceback(out) == "payments/client.py:39"
+    assert line_from_traceback(out, exists=lambda p: True) == "payments/client.py:39"
     # assertion inside the test itself: no non-test frame, so no hint (bisect instead)
-    assert line_from_traceback("tests/test_client.py:30: AssertionError\n") is None
-    assert line_from_traceback("pkg\\mod.py:7: ValueError\n") == "pkg/mod.py:7"
+    assert line_from_traceback("tests/test_client.py:30: AssertionError\n", exists=lambda p: True) is None
+    assert line_from_traceback("pkg\\mod.py:7: ValueError\n", exists=lambda p: True) == "pkg/mod.py:7"

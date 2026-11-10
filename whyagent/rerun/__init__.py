@@ -13,11 +13,12 @@ def fisher_one_sided(a_pass: int, a_n: int, b_pass: int, b_n: int) -> float:
                if 0 <= total_pass - x <= a_n) / denom
 
 
-def decide(a_pass: int, a_n: int, b_pass: int, b_n: int) -> tuple[str, float]:
+def decide(a_pass: int, a_n: int, b_pass: int, b_n: int, alpha: float = 0.05) -> tuple[str, float]:
+    """alpha: significance level; lower it when several lessons are tested against the same arm A."""
     p = fisher_one_sided(a_pass, a_n, b_pass, b_n)
     if a_pass >= 0.8 * a_n:
         return "NOT_NEEDED", p
-    if p < 0.05:
+    if p < alpha:
         return "VALIDATED", p
     if b_pass > a_pass:
         return "PROMISING", p

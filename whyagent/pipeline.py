@@ -6,6 +6,7 @@ those facts with real test runs, through `Replayer.run` only (the A/B contract).
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 import subprocess
 from dataclasses import dataclass
@@ -138,12 +139,25 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
                 prompt=(report["session"]["prompt"] or "")[:400], agent=report["session"]["agent"],
                 replay_matches=fid.matches)
     events.stage("session", "done", edits=len(order))
+    derived = len(fid.shell) + len(fid.unattributed)
     say(f"session: {report['session']['id']} · {len(order)} edits · "
         + ("replay matches commit ✓" if fid.matches else
-           "replay matches commit ✓ with " + ", ".join(p for p in (
-               f"{len(fid.shell)} edit(s) made by the agent's shell commands" if fid.shell else "",
-               f"{len(fid.unattributed)} unattributed edit(s)" if fid.unattributed else "") if p)
-           + f" ({', '.join(fid.files)})"))
+           "replay rebuilt from the commit diff: " + ", ".join(p for p in (
+               f"{len(fid.shell)} edit(s) traced to the agent's shell commands" if fid.shell else "",
+               f"{len(fid.unattributed)} unattributed edit(s)" if fid.unattributed else "",
+               f"{len(fid.dropped)} recorded edit(s) didn't apply and were dropped" if fid.dropped else "") if p)
+           + (f" ({', '.join(fid.files)})" if fid.files else "")))
+    if fid.stale:
+        report.note(f"{len(fid.stale)} recorded edit(s) belong to earlier commits of the same session (already in "
+                    "the parent commit), so they weren't replayed.")
+    if fid.dropped:
+        report.note(f"{len(fid.dropped)} of the agent's recorded edits didn't apply to the parent commit and were "
+                    "dropped; the commit diff stands in for them, so their reasoning isn't shown.")
+    if order and derived * 2 > len(order):
+        report.note(f"{derived} of {len(order)} edits were rebuilt from the commit diff rather than taken from "
+                    "the agent's Edit/Write calls (the agent edited mostly with shell commands). The guilty edit "
+                    "is still proven by test runs, but its reasoning and position in the session are a best guess.")
+        say(f"warning: {derived}/{len(order)} edits rebuilt from the commit diff; reasoning is a best guess")
     if fid.shell_guessed:
         report.note("Several agent shell commands could have made edit(s) "
                     + ", ".join(f"#{i}" for i in fid.shell_guessed)
@@ -298,6 +312,13 @@ def find_root_cause(repo: str, steps: list[Step], fid: Fidelity, guilty: str, pa
     if not failing_output[0]:
         r = rp.run(State(parent, order, head), 1)[0]
         failing_output[0] = r.output
+    if not (s.prompt or "").strip():
+        # an unattributed edit carries no prompt; the reruns still need the task, so use the session's
+        # last prompt before this edit (else the session's prompt)
+        prev = [by_id[i].prompt for i in sorted(by_id) if i < s.id and (by_id[i].prompt or "").strip()]
+        task = prev[-1] if prev else report["session"]["prompt"]
+        if task:
+            s = dataclasses.replace(s, prompt=task)
     rc = RootCause(step=s, collateral=collateral, before_state=State(parent, order[:idx], head),
                    edits_before=[by_id[i] for i in order[:idx]], failing_output=failing_output[0],
                    head_state=State(head, [], head), extra_causes=extra)

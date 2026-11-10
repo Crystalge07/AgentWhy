@@ -106,6 +106,7 @@ class Fidelity:
     deleted: list[str] = field(default_factory=list)       # deleted in G; replay leaves them empty
     shell: list[int] = field(default_factory=list)         # leftover edits traced to the agent's shell commands
     shell_guessed: list[int] = field(default_factory=list)  # shell edits where several commands could have made them
+    stale: list[int] = field(default_factory=list)  # made before the parent commit and already in it: not replayed
 
 
 def reconcile(steps: list[Step], read_base: ReadFn, read_commit: ReadFn, changed: list[str],
@@ -232,6 +233,10 @@ def attribute_shell_edits(steps: list[Step], fid: Fidelity, shell: list[dict]) -
             continue
         scores = [_content_score(c["command"], s) for c in hits]
         best = max(scores)
+        # commands from before the parent commit (earlier commits in the same session) only win on content
+        late = [(c, sc) for c, sc in zip(hits, scores) if not c.get("early")]
+        if late and max(sc for _, sc in late) == best:
+            hits, scores = [c for c, _ in late], [sc for _, sc in late]
         c = hits[len(scores) - 1 - scores[::-1].index(best)]  # last command with the best score
         if best == 0 and len({h["command"] for h in hits}) > 1:
             guessed.append(s.id)
@@ -241,3 +246,43 @@ def attribute_shell_edits(steps: list[Step], fid: Fidelity, shell: list[dict]) -
     fid.shell = [s.id for s in steps if s.kind == "shell"]
     fid.shell_guessed = guessed
     fid.unattributed = [s.id for s in steps if s.kind == "unattributed"]
+
+
+def place_shell_edits(steps: list[Step], fid: Fidelity, read_base: ReadFn) -> list[Step]:
+    """Move each shell edit from the end of the replay to when its command ran.
+
+    reconcile() appends edits rebuilt from the commit diff after all of the agent's tool edits. Once
+    attribute_shell_edits() has credited one to a command, it goes right before the first edit made
+    after that command, but only if the file's edits still apply in that order and end in the same
+    content; otherwise it stays at the end. Ids are renumbered and `fid` updated to match.
+    """
+    def replay_file(seq: list[Step], f: str) -> str | None:
+        cur = read_base(f)
+        for x in seq:
+            if x.file == f:
+                cur = apply(cur, x)
+        return cur
+
+    out = list(steps)
+    for s in [x for x in steps if x.kind == "shell" and x.ts]:
+        i = next(k for k, x in enumerate(out) if x is s)
+        j = next((k for k, x in enumerate(out) if x is not s and x.kind != "unattributed" and x.ts and x.ts > s.ts),
+                 None)
+        if j is None or j >= i:
+            continue
+        cand = out[:i] + out[i + 1:]
+        cand.insert(j, s)
+        try:
+            ok = replay_file(cand, s.file) == replay_file(out, s.file)
+        except ApplyError:
+            ok = False
+        if ok:
+            out = cand
+    old_ids = {id(s): s.id for s in out}
+    for n, s in enumerate(out, 1):
+        s.id = n
+    remap = {old_ids[id(s)]: s.id for s in out}
+    fid.shell = [s.id for s in out if s.kind == "shell"]
+    fid.shell_guessed = sorted(remap[i] for i in fid.shell_guessed)
+    fid.unattributed = [s.id for s in out if s.kind == "unattributed"]
+    return out

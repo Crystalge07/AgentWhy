@@ -20,6 +20,22 @@ ANALYSES_DDL = """CREATE TABLE IF NOT EXISTS analyses (
 )"""
 
 
+# One row per test run (same columns as docs/tiger_schema.sql), so logging works without applying the schema.
+# The schema file also makes it a hypertable and adds the runs_by_stage view for the chart.
+RUNS_DDL = """CREATE TABLE IF NOT EXISTS runs (
+    time         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    analysis_id  TEXT        NOT NULL,
+    pruned       BOOLEAN     NOT NULL,
+    stage        TEXT        NOT NULL,
+    state_hash   TEXT        NOT NULL,
+    outcome      TEXT        NOT NULL,
+    duration_ms  INTEGER     NOT NULL,
+    tokens       INTEGER,
+    arm          TEXT,
+    cached       BOOLEAN     NOT NULL DEFAULT false
+)"""
+
+
 # Blind bisect estimate (runs a bisect over every non-test edit would need), set when the report is written.
 BLIND_DDL = "ALTER TABLE analyses ADD COLUMN IF NOT EXISTS blind_runs INTEGER"
 
@@ -63,6 +79,7 @@ class RunLog:
                 self._conn = connect(url)
                 self._conn.execute(ANALYSES_DDL)
                 self._conn.execute(HOST_DDL)
+                self._conn.execute(RUNS_DDL)
                 self._conn.execute("INSERT INTO analyses (analysis_id, label, pruned, host, cpus, workers)"
                                    " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id) DO NOTHING",
                                    (self.analysis_id, label, pruned, host_label(), os.cpu_count(), workers))

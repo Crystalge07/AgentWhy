@@ -107,15 +107,22 @@ def _tiger_lessons(timeout: int = 10, quiet: bool = False) -> list[dict]:
 _EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Warning|Failure))\b:?\s*(.*)$")
 
 
-def error_key(output: str) -> tuple[str, str]:
-    """(exception type, normalized message) of the last exception line in a test's output."""
-    for line in reversed(output.strip().splitlines()):
+def error_keys(output: str) -> list[tuple[str, str]]:
+    """(exception type, normalized message) of every exception line in a test's output, in order."""
+    keys = []
+    for line in output.strip().splitlines():
         m = _EXC.match(line.strip())
         if m:
             name = m[1].rsplit(".", 1)[-1]
             msg = re.sub(r"0x[0-9a-f]+|\d+|'[^']*'|\"[^\"]*\"", "#", m[2].lower()).strip()
-            return name, msg[:200]
-    return "", ""
+            keys.append((name, msg[:200]))
+    return keys
+
+
+def error_key(output: str) -> tuple[str, str]:
+    """(exception type, normalized message) of the last exception line in a test's output."""
+    keys = error_keys(output)
+    return keys[-1] if keys else ("", "")
 
 
 def _brain_records(timeout: int = 10, quiet: bool = False) -> list[dict]:

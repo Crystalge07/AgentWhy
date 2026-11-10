@@ -62,6 +62,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | `--rerun-agent gemini-cli\|claude-code\|stub` | Agent for the reruns (same agent in both arms). Default `claude-code` with `--model claude`, else `gemini-cli`. `claude-code` takes `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`); `WHYAGENT_CLAUDE_MODEL=haiku` picks the model. `stub` runs `$WHYAGENT_STUB_CMD` with no model, to rehearse Stage 8. Missing API keys stop Stage 8 before any image is built |
 | `--target-runs N` | Target-test runs per rerun; all must pass (default: the precheck's runs per state, so flaky bugs must stay fixed; 1 with `--root-cause`) |
 | `--lesson TEXT` | Test this lesson instead of asking `--model` to write one (without it and without the model's key, Stage 7 is skipped) |
+| `--lesson-attempts N` | When a lesson doesn't help (INEFFECTIVE / PROMISING), write a different one, told what failed, and rerun only the with-lesson arm; up to N lessons in all (default 3, 1 = no retries). Each lesson must reach p < 0.05 / N to count as VALIDATED, so trying more lessons doesn't make a false VALIDATED more likely. Never retries a `--lesson` you passed. The report shows the validated lesson, else the one with the lowest p |
 | `--trail` | Post the root cause as a finding on this branch's Entire trail (proof, reasoning, lesson), with the revert as a suggested patch |
 | `--pr` / `--no-pr` | **On by default.** After every analysis that finds a root cause, open a GitHub PR with a fix re-verified at HEAD (target test + suite, tests untouched). If Stage 8 VALIDATES the lesson: the fix from a passing with-lesson rerun (else the revert of the guilty edit), plus the rule added to `--instructions` and an `@AGENTS.md` import in `CLAUDE.md`. Otherwise (lesson not validated, or `--no-rerun`): the revert of the guilty edit, and no rule. Done in a temp worktree; needs a github.com remote and `gh` logged in (if not, the PR step reports why and the analysis still succeeds). `--no-pr` turns it off |
 | `--pr-remote NAME` | `--pr`: the remote to push the PR branch to (default: the first github.com one) |
@@ -91,7 +92,7 @@ It writes `.whyagent/report.html` (+ `report.json` and `root_cause.json`).
 | 5 Bisect | Prefix bisect over the agent's edits, in parallel on the worker pool |
 | 6 Confirm | Reverts the edit from the final state → test passes. ddmin if there's more than one cause |
 | 7 Lesson | Brain first; otherwise the model (Gemini first, Claude as fallback) writes a one-sentence lesson from the reasoning, trigger and diff, or you pass `--lesson`. Lessons never suggest editing tests |
-| 8 Reruns | The agent redoes the task from just before the bad edit, with vs without the lesson; Fisher exact test; saved to Brain only if validated |
+| 8 Reruns | The agent redoes the task from just before the bad edit, with vs without the lesson; Fisher exact test; saved to Brain only if validated. A lesson that doesn't help is replaced by a different one (`--lesson-attempts`), with the significance threshold split across attempts |
 
 ### Live loop (`--live`)
 

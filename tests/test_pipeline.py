@@ -174,3 +174,15 @@ def test_precheck_looks_harder_when_head_passes_5_in_a_row(tmp_path, monkeypatch
     out = capsys.readouterr().out
     assert "nothing to explain" not in out
     assert "HEAD fails 1/15" in out and "flaky" in out
+
+
+def test_unattributed_root_cause_gets_the_sessions_task(tmp_path):
+    parent, g, steps, files = make_repo(tmp_path)
+    s3 = steps[2]
+    s3.kind, s3.agent, s3.prompt, s3.reasoning = "unattributed", "unattributed", "", None  # rebuilt from the diff
+    cmd = f'"{sys.executable}" -m pytest -q -p no:cacheprovider tests/test_core.py::test_total'
+    sig = Replayer(str(tmp_path), [], cmd).run(State(g, [], g))[0].signature
+    rp = Replayer(str(tmp_path), steps, cmd, target_sig=sig, sandbox=LocalSandbox())
+    rc = find_root_cause(str(tmp_path), steps, Fidelity(matches=False, unattributed=[3]), g, parent, g, rp,
+                         Options(), Report(), say=lambda *_: None)
+    assert rc.step.id == 3 and rc.step.prompt == "tidy up"  # the reruns get a real task, not "(not recorded)"

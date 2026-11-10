@@ -29,18 +29,21 @@ class FakeReruns:
     def __init__(self, *a, **kw):
         self.excluded, self.blocked, self._abort, self.capture_diff = [], [], None, False
 
+    passes: dict = {}  # lesson -> with-lesson passes (default: all for "Good lesson.", none otherwise)
+
     def run(self, rc, lesson, n, arm_a=True, job0=0):
         FakeReruns.calls.append((lesson, arm_a))
-        out = "PASS" if lesson == "Good lesson." else "FAIL"
-        b = [RerunResult("B", out, "target fails" if out == "FAIL" else "ok", 1) for _ in range(n)]
+        k = FakeReruns.passes.get(lesson, n if lesson == "Good lesson." else 0)
+        b = [RerunResult("B", "PASS" if i < k else "FAIL", "ok" if i < k else "target fails", 1) for i in range(n)]
         return ([RerunResult("A", "FAIL", "target fails", 1) for _ in range(n)] if arm_a else []), b
 
 
-def _run(monkeypatch, lessons, attempts):
+def _run(monkeypatch, lessons, attempts, given=None, runs=4, passes=None, rc=None):
     import whyagent.rerun as rerun
     from whyagent import entire, providers
 
     FakeReruns.calls = []
+    FakeReruns.passes = passes or {}
     seen = []
     queue = list(lessons)
     monkeypatch.setattr(rerun, "Reruns", FakeReruns)
@@ -51,10 +54,10 @@ def _run(monkeypatch, lessons, attempts):
     saved = []
     monkeypatch.setattr(entire, "brain_save", saved.append)
     monkeypatch.setattr(entire, "repo_name", lambda r: "repo")
-    args = SimpleNamespace(model=None, lesson=None, no_rerun=False, sandbox="docker", rerun_agent="stub", runs=4,
-                           workers=1, target_runs=1, pr=False, lesson_attempts=attempts)
+    args = SimpleNamespace(model=None, lesson=given, no_rerun=False, sandbox="docker", rerun_agent="stub",
+                           runs=runs, workers=1, target_runs=1, pr=False, lesson_attempts=attempts)
     report, out = Report(), {}
-    code = cli._lesson_and_reruns(_rc(), SimpleNamespace(repo="."), args, report, None, out)
+    code = cli._lesson_and_reruns(rc or _rc(), SimpleNamespace(repo="."), args, report, None, out)
     return code, report, out, seen, saved
 
 
@@ -77,3 +80,30 @@ def test_stops_after_the_attempt_limit(monkeypatch):
 def test_one_attempt_means_no_retry(monkeypatch):
     _, report, out, *_ = _run(monkeypatch, ["Bad one."], 1)
     assert len(FakeReruns.calls) == 1 and out["verdict"] == "INEFFECTIVE"
+
+
+def test_a_given_lesson_is_never_replaced(monkeypatch):
+    _, report, out, seen, _ = _run(monkeypatch, ["Model lesson."], 3, given="My lesson.")
+    assert FakeReruns.calls == [("My lesson.", True)] and seen == []
+    assert out["lesson"] == "My lesson." and out["verdict"] == "INEFFECTIVE"
+
+
+def test_retries_split_the_significance_level(monkeypatch):
+    # 0/5 vs 4/5 (p ≈ 0.024) validates a single lesson, but not one of three
+    _, report, out, *_ = _run(monkeypatch, ["Close."], 1, runs=5, passes={"Close.": 4})
+    assert out["verdict"] == "VALIDATED"
+    _, report, out, *_ = _run(monkeypatch, ["Close.", "Bad.", "Worse."], 3, runs=5, passes={"Close.": 4})
+    assert out["verdict"] == "PROMISING" and report["rerun"]["alpha"] < 0.02
+
+
+def test_reports_the_closest_lesson_when_none_validates(monkeypatch):
+    _, report, out, *_ = _run(monkeypatch, ["Close.", "Bad."], 2, runs=5, passes={"Close.": 3})
+    assert out["lesson"] == "Close." and report["lesson"]["text"] == "Close."
+    assert report["rerun"]["b"].count("PASS") == 3 and len(report["rerun"]["attempts"]) == 2
+
+
+def test_no_reruns_without_a_task_prompt(monkeypatch):
+    rc = _rc()
+    rc.step.prompt = ""
+    code, report, out, *_ = _run(monkeypatch, ["Lesson."], 3, rc=rc)
+    assert FakeReruns.calls == [] and code == 0 and "rerun" not in out

@@ -1,4 +1,4 @@
-"""--rules: the validated rules from the Brain (local file + Tiger Data), as Markdown for an agent's context.
+"""--rules: the validated rules from the Brain (Tiger Data), as Markdown for an agent's context.
 
 Two levels of rules:
 - per repo: the PR whyagent opens adds the rule to that repo's AGENTS.md, and every agent reads it there;

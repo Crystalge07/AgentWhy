@@ -23,9 +23,16 @@ _GIT_VIEWERS = {"ls-files", "show", "log", "diff", "status", "blame", "grep", "l
                 "check-ignore", "cat-file"}
 
 
+# An output redirect into a file (`> f`, `>> f`, `2> f`); not into /dev/null or another stream (`2>&1`).
+_WRITE_REDIRECT = re.compile(r"(?<![<>&])(?:\d|&)?>>?(?!&)\s*(?!/dev/null\b)['\"]?[^\s&'\"]")
+
+
 def _is_view_only(command: str) -> bool:
-    """True if every part of a shell command (split on && || ; |) only views files or repo state."""
+    """True if every part of a shell command (split on && || ; |) only views files or repo state.
+    `echo x >> f` writes f, so any part that redirects output into a file isn't view-only."""
     for part in re.split(r"&&|\|\||;|\||\n", command or ""):
+        if _WRITE_REDIRECT.search(part):
+            return False
         words = [w for w in part.strip().split() if "=" not in w.split("/")[0]]  # skip VAR=x prefixes
         if not words:
             continue
@@ -70,6 +77,17 @@ def _text_of(content) -> str:
             elif c.get("type") == "tool_result":
                 parts.append(_text_of(c.get("content")))
     return "\n".join(p for p in parts if p)
+
+
+def _when(ts: str):
+    """ISO timestamp -> aware datetime, or None if it can't be read."""
+    from datetime import datetime, timezone
+
+    try:
+        d = datetime.fromisoformat((ts or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
 def parse_claude_code(transcript: str, session_id: str = "", shell_out: list | None = None) -> list[Step]:

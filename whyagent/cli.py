@@ -47,9 +47,15 @@ def _git(*a) -> str:
     return subprocess.run(["git", *a], capture_output=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
 
-def line_from_traceback(output: str, is_test=None) -> str | None:
-    """The deepest non-test frame in pytest's failure output ("path.py:39: ApiError"), as file:line.
-    PRD: --line is parsed from the traceback when omitted. None when the failure is in the test itself."""
+def _at_head(path: str) -> bool:
+    return subprocess.run(["git", "cat-file", "-e", f"HEAD:{path}"], capture_output=True).returncode == 0
+
+
+def line_from_traceback(output: str, is_test=None, exists=_at_head) -> str | None:
+    """The deepest repo frame in pytest's failure output ("path.py:39: ApiError") that isn't a test, as
+    file:line. PRD: --line is parsed from the traceback when omitted. Frames outside the repo (a library
+    in site-packages raising) are skipped, so the hint lands on the repo code that called it. None when
+    the failure is in the test itself."""
     import re
 
     from .replay import is_test_file
@@ -57,7 +63,7 @@ def line_from_traceback(output: str, is_test=None) -> str | None:
     is_test = is_test or is_test_file
     hits = [(m.group(1).replace("\\", "/"), m.group(2))
             for m in re.finditer(r"^([\w./\\-]+\.py):(\d+): \S", output, flags=re.M)]
-    hits = [h for h in hits if not is_test(h[0])]
+    hits = [h for h in hits if not is_test(h[0]) and exists(h[0])]
     return f"{hits[-1][0]}:{hits[-1][1]}" if hits else None
 
 
@@ -157,7 +163,7 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
     """Stages 7-8. rp must know rc's steps. Fills `out` with lesson, rr, b_all and verdict as they become
     known, for the PR step."""
     from .model import model_name
-    from .rerun import Reruns, agent_by_name, decide
+    from .rerun import Reruns, agent_by_name, decide, fisher_one_sided
     from .rerun.lesson import GENERATORS, generator_missing
 
     # Stage 7 — Brain first, then the --model writer (Gemini or Claude)
@@ -200,6 +206,12 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
     if args.no_rerun:
         events.stage("rerun", "skip", why="--no-rerun")
         return 0
+    if not (rc.step.prompt or "").strip():
+        why = "the session's task prompt wasn't recorded, so a rerun would have no task to redo"
+        print(f"rerun: skipped, {why}")
+        report.note(f"Reruns skipped: {why}.")
+        events.stage("rerun", "skip", why=why)
+        return 0
 
     # Stage 8 — same agent both arms, N runs each
     if args.sandbox != "docker":
@@ -220,9 +232,14 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
     target_runs = max(1, getattr(args, "target_runs", None) or 1)
     print(f"rerun: {agent.name}, {args.runs} runs per arm, {args.workers} at a time"
           + (f", target test {target_runs}× per rerun (flaky)" if target_runs > 1 else "") + "…")
-    if args.runs < 4:
-        print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
-    max_attempts = max(1, getattr(args, "lesson_attempts", None) or 1)
+    # Lesson retries test several lessons against the same no-lesson arm, so the 5% false-VALIDATED rate is
+    # split across them (Bonferroni). A lesson the user passed is tested as given, never replaced.
+    max_attempts = 1 if source == "given" else max(1, getattr(args, "lesson_attempts", None) or 1)
+    alpha = 0.05 / max_attempts
+    if fisher_one_sided(0, args.runs, args.runs, args.runs) >= alpha:
+        need = next(n for n in range(1, 100) if fisher_one_sided(0, n, n, n) < alpha)
+        print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < {alpha:.3g}"
+              f" (VALIDATED needs {need}+{f' with {max_attempts} lesson attempts' if max_attempts > 1 else ''})")
     events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, attempt=1)
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
     rr.capture_diff = bool(getattr(args, "pr", False))  # the PR builds its fix from a passing rerun's diff
@@ -251,6 +268,7 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
             report.note(f"Rerun arm A: {r.outcome.lower()}, {r.detail}")
     ap = sum(r.outcome == "PASS" for r in a)
     attempts: list[dict] = []  # every lesson tested, in order; the ones that failed steer the next one
+    tested: list[dict] = []  # full results per attempt, to report the best one if none validates
     attempt = 1
     while True:
         tag = f" (lesson {attempt})" if attempt > 1 else ""
@@ -259,6 +277,14 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
                 report.note(f"Rerun arm B{tag}: {r.outcome.lower()}, {r.detail}")
         b = [r for r in b_all if r.outcome != "OTHER"]
         out["b_all"] = b_all
+        if (not a or not b) and attempts:  # a retry's lesson arm never ran; keep the lessons already tested
+            why = next(r.detail for r in b_all if r.outcome == "OTHER")
+            print(f"rerun{tag}: INCONCLUSIVE, no valid with-lesson runs ({why}); keeping the earlier lessons")
+            attempts.append({"text": lesson, "source": source, "verdict": "INCONCLUSIVE", "p": None,
+                             "b": [r.outcome for r in b_all]})
+            report["rerun"]["attempts"] = attempts
+            events.stage("rerun", "error", verdict="INCONCLUSIVE", why=why, attempt=attempt)
+            break
         if not a or not b:
             out["verdict"] = "INCONCLUSIVE"
             why = next(r.detail for r in a_all + b_all if r.outcome == "OTHER")
@@ -271,7 +297,7 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
             _note_blocked(rr, report)
             return 1
         bp = sum(r.outcome == "PASS" for r in b)
-        verdict, p = decide(ap, len(a), bp, len(b))
+        verdict, p = decide(ap, len(a), bp, len(b), alpha=alpha)
         out["verdict"] = verdict
         dropped = len(a_all) + len(b_all) - len(a) - len(b)
         saved = False
@@ -292,8 +318,10 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
                          "b": [r.outcome for r in b_all]})
         report["lesson"] = {"text": lesson, "source": source}
         report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
-                           "p": p, "verdict": verdict, "saved_to_brain": saved, "attempts": attempts,
+                           "p": p, "alpha": alpha, "verdict": verdict, "saved_to_brain": saved, "attempts": attempts,
                            "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
+        tested.append({"p": p, "lesson": dict(report["lesson"]), "rerun": dict(report["rerun"]), "b_all": b_all,
+                       "verdict": verdict})
         events.stage("rerun", "done", verdict=verdict, p=p, a=f"{ap}/{len(a)}", b=f"{bp}/{len(b)}", attempt=attempt)
         # VALIDATED: done. NOT_NEEDED: agents without any lesson already pass, so no lesson can beat that.
         if verdict in ("VALIDATED", "NOT_NEEDED") or attempt >= max_attempts:
@@ -321,8 +349,18 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
         events.stage("lesson", "done", text=lesson, source=source, attempt=attempt)
         events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, attempt=attempt, keep_a=True)
         _, b_all = rr.run(rc, lesson, args.runs, arm_a=False, job0=args.runs * (attempt + 1))
+    if len(attempts) > 1 and tested and tested[-1]["verdict"] != "VALIDATED":
+        # none validated: report the lesson that came closest (lowest p), not just the last one tried
+        best = min(tested, key=lambda x: x["p"])
+        report["lesson"] = best["lesson"]
+        report["rerun"] = {**best["rerun"], "attempts": attempts}
+        out["lesson"], out["b_all"], out["verdict"] = best["lesson"]["text"], best["b_all"], best["verdict"]
+        if best["lesson"]["text"] != attempts[-1]["text"]:
+            print(f'rerun: no lesson validated; reporting the closest one (p = {best["p"]:.3f}): '
+                  f'"{best["lesson"]["text"]}"')
     if len(attempts) > 1:
-        report.note("Lessons tested: " + " · ".join(f'#{i} {t["verdict"]}: "{t["text"]}"'
+        report.note(f"Each lesson needed p < {alpha:.3g} (0.05 split across {max_attempts} attempts). "
+                    "Lessons tested: " + " · ".join(f'#{i} {t["verdict"]}: "{t["text"]}"'
                                                     for i, t in enumerate(attempts, 1)))
     _note_blocked(rr, report)
     return 0
@@ -606,8 +644,7 @@ def _analyze(args, head: str, good: str, report: Report, runlog) -> int:
     events.stage("precheck", "done", mode=mode, runs_per_state=n)
     if not args.line:
         found = line_from_traceback(next(r.output for r in head_res if r.signature == target_sig))
-        if found and subprocess.run(["git", "cat-file", "-e", f"HEAD:{found.rsplit(':', 1)[0]}"],
-                                    capture_output=True).returncode == 0:
+        if found:
             args.line = report["meta"]["line"] = found
             print(f"blame hint: {found}, from the traceback (pass --line to override)")
 

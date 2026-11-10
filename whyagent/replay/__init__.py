@@ -17,13 +17,29 @@ from .. import events
 from ..types import OTHER, PASS, TARGET_FAIL, RunResult, State, Step
 from .sandbox import DockerSandbox, LocalSandbox, SandboxError, docker_available  # noqa: F401
 
-DEFAULT_TEST_GLOBS = ["tests/*", "test_*.py", "*/test_*.py", "conftest.py", "*/conftest.py"]
+# fnmatch's * also matches "/", so "*/tests/*" covers tests/ folders at any depth (pkg/tests/helpers.py)
+DEFAULT_TEST_GLOBS = ["tests/*", "*/tests/*", "test/*", "*/test/*", "test_*.py", "*/test_*.py", "*_test.py",
+                      "conftest.py", "*/conftest.py"]
+_FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?: - |$)", re.M)  # pytest's short summary
 _NOISE = re.compile(r"0x[0-9a-f]+|\d+(\.\d+)?|(/[\w.\-]+)+|\d{4}-\d\d-\d\dT[\d:.]+", re.I)
 
 
 def signature(output: str) -> str:
-    tail = "\n".join(output.strip().splitlines()[-20:])
-    return hashlib.sha1(_NOISE.sub("#", tail).encode()).hexdigest()[:12]
+    """What kind of failure this is, stable across code changes that don't change the failure.
+
+    Built from the exceptions raised (type + normalized message), not the raw output: pytest prints the
+    source around the raising line, so hashing the tail would call the same error OTHER whenever the
+    agent touched that function. Falls back to the normalized output tail when no exception is found.
+    """
+    from ..entire import error_keys
+
+    keys = sorted(set(error_keys(output)))
+    if not keys:
+        basis = _NOISE.sub("#", "\n".join(output.strip().splitlines()[-20:]))
+    else:  # which tests failed too, so an unrelated assertion elsewhere isn't the same failure
+        failed = sorted(set(_FAILED.findall(output)))
+        basis = "\n".join([f"{t}: {m}" for t, m in keys] + failed)
+    return hashlib.sha1(basis.encode()).hexdigest()[:12]
 
 
 def is_test_file(path: str, globs=DEFAULT_TEST_GLOBS) -> bool:
