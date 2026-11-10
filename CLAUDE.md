@@ -6,16 +6,12 @@ Context for Claude Code sessions in this repo. The full spec is `whyagent — PR
 
 **agentwhy**: `git blame` for agent decisions. When an AI coding agent breaks a test, agentwhy finds which agent *edit* caused it, proves it with real test runs (not an LLM's opinion), shows the agent's reasoning and the error it was reacting to, then validates a lesson with counterfactual reruns before saving it.
 
-Pitch: "`git blame` tells you which line changed. We tell you which decision caused it, and prove it."
-
-Built for **HackTrent** (Nov 2026, ~48 h). Main track: **Best Use of Entire**. Also targeting Gemini, Vultr and Tiger Data. (GoDaddy is dropped.)
-
 ## Pipeline (PRD stages)
 
 0. Precheck: HEAD fails, `--good` passes; stable vs flaky mode; save failure signature.
 1. Guilty commit: blame hint on `--line`, else `git bisect`. Read the Entire checkpoint trailer.
 2. Load the Entire session(s) for that commit → ordered `Step`s; replay fidelity check; dependency map.
-3. Edit-level blame hint (the demo's "NOT the cause" moment).
+3. Edit-level blame hint (can report the blamed line's edit as "NOT the cause").
 4. Entire Graph pruning, always verified with one run.
 5. Prefix bisect over edits.
 6. Confirm by reverting the edit from the final state; ddmin if multiple causes.
@@ -24,20 +20,19 @@ Built for **HackTrent** (Nov 2026, ~48 h). Main track: **Best Use of Entire**. A
 
 Every test run has three outcomes: `PASS`, `TARGET_FAIL` (same signature as HEAD), `OTHER` (never counts as evidence). Test files are pinned to HEAD in every state.
 
-## Code layout and ownership
+## Code layout
 
 Shared types live in `whyagent/types.py` (`Step`, `State`, `RunResult`, `RootCause`). Code against them.
 
-- **A — Find the cause (stages 1–6):** `whyagent/entire.py` (incl. Graph + Brain wrappers), `whyagent/adapters/`, `whyagent/bisect/`, `cli.py` stages 1–6 + report output, seeded demo repo, recording scenarios 1 and 3.
-- **B — Prove the fix (stages 0, 7, 8):** `whyagent/replay/` (Docker sandbox, worker pool, cache, flaky voting), `whyagent/rerun/` (Gemini lesson, rerun harness), Vultr, Tiger Data, Gemini setup, `cli.py` stages 0, 7, 8, recording scenario 2 + rerun dry runs.
-- Contracts: `bisect/` only touches code through `replay.run`; `rerun/` only touches Brain through `entire.brain_lookup` / `brain_save`; A hands B a `RootCause`.
-- Full split with hour estimates: the PRD's "Team split and 48-hour timeline".
+- **Find the cause (stages 1–6):** `whyagent/entire.py` (incl. Graph + Brain wrappers), `whyagent/adapters/`, `whyagent/bisect/`, `whyagent/graph.py`, `whyagent/pipeline.py`.
+- **Prove the fix (stages 0, 7, 8):** `whyagent/replay/` (Docker sandbox, worker pool, cache, flaky voting), `whyagent/rerun/` (lesson, rerun harness), `whyagent/tiger.py`.
+- Contracts: `bisect/` only touches code through `replay.run`; `rerun/` only touches Brain through `entire.brain_lookup` / `brain_save`; stage 6 hands stages 7–8 a `RootCause`.
 
-See the README's layout table for what's done vs TODO.
+See the README's layout table for every module.
 
-## Team and machines
+## Cross-platform
 
-Team of two: Crystal (B, Mac) owns the repo; Anton (A) develops on **Windows**, so code must work on both:
+agentwhy runs on Mac, Linux and **Windows**, so code must work on all of them:
 
 - Always decode subprocess output with `encoding="utf-8", errors="replace"`, never bare `text=True` (Windows defaults to cp1252 and crashes on Entire's `●`/`✓` output).
 - Don't hard-code `python3` (on Windows it's a Microsoft Store stub). Use `sys.executable` in tests.
@@ -58,7 +53,7 @@ Infra (Vultr VM, Tiger Data) is in `docs/setup.md`.
 ## Entire and git workflow
 
 - `origin` is the **Entire** repo (`entire://aws-us-east-2.entire.io/et/agentwhy/agentwhy`). Push there so session checkpoints upload. A `github` remote (`https://github.com/Crystalge07/AgentWhy.git`) holds a code-only copy; push to it with `git push github main`.
-- Each machine must run `entire enable --agent claude-code` once after cloning (git hooks are local). Claude Code sessions started *before* that aren't recorded; restart Claude Code.
+- Each clone must run `entire enable --agent claude-code` once (git hooks are local). Claude Code sessions started *before* that aren't recorded; restart Claude Code.
 - Commits made in a Claude Code session get an Entire checkpoint trailer linking to the session. That trailer is agentwhy's input data, so don't strip it.
-- **Never force-push `main`.** Work on a branch (`<name>/<topic>`) and merge in; merge to main at least every ~6 h.
+- **Never force-push `main`.** Work on a branch (`<name>/<topic>`) and merge in.
 - Session transcripts upload with every push to `origin`. Never paste API keys or secrets into prompts. Keep `GEMINI_API_KEY`, `TIGER_DATABASE_URL`, etc. in env vars, never in committed files.

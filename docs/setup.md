@@ -1,13 +1,13 @@
-# Infra setup (owner: B)
+# Infra setup
 
 ## Vultr — sandbox VM
 
-1. **Credits.** Sign up at vultr.com and redeem the HackTrent promo code/credit link from the sponsor table or Discord. Credits can take a while to approve, so do this first.
+1. **Account.** Sign up at vultr.com.
 2. **SSH key.** Account → SSH Keys → add `~/.ssh/id_ed25519.pub` (create with `ssh-keygen -t ed25519` if missing).
 3. **Deploy.** Products → Deploy → Cloud Compute (Shared CPU is fine):
    - OS: Ubuntu 24.04 LTS (or Marketplace → Docker, which preinstalls it)
-   - Region: closest to the venue
-   - Size: 4 vCPU / 8 GB to start (≈ 4 workers). Resize to 8 vCPU for the demo if credits allow.
+   - Region: closest to you
+   - Size: 4 vCPU / 8 GB to start (≈ 4 workers). 8 vCPU for more parallel workers.
    - Attach your SSH key; hostname `agentwhy`.
 4. **Install Docker** (skip if you used the Docker marketplace image):
    ```sh
@@ -21,7 +21,7 @@
    apt-get install -y git python3-venv
    git clone <this repo> && cd agentwhy
    python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-   # also clone the seeded demo repo, install the Entire CLI, and set GEMINI_API_KEY / TIGER_DATABASE_URL
+   # also clone the repo you want to analyze, install the Entire CLI, and set GEMINI_API_KEY / TIGER_DATABASE_URL
    ```
    **Auto-sync your code to the VM** (Mac, Linux or Windows; needs your SSH key on the VM). One time per machine, from the repo root:
    ```sh
@@ -29,7 +29,7 @@
    .venv\Scripts\python scripts\sync_vm.py --install-hook root@<VM-IP>        # Windows
    ```
    After that, every `git commit` copies tracked files to `/root/hacktrent/agentwhy` and reinstalls them in the background. The VM's `.env` and `.venv` are left alone. The log is `.git/whyagent-vm-sync.log`. Run `scripts/sync_vm.py` to sync by hand, or `git config whyagent.vmSync false` to turn it off.
-7. **Stop billing** when idle: power off doesn't stop charges — snapshot and destroy between sessions, or just watch the credit balance.
+7. **Stop billing** when idle: power off doesn't stop charges — snapshot and destroy between sessions.
 
 ## Tiger Data — run log + chart
 

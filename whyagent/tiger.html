@@ -114,7 +114,7 @@ function render(d) {
 
   <section class="card">
     <h2>Every test run, as it happened</h2>
-    <div class="sub">Test runs per 30 minutes over the hackathon, by result. Bucketed by TimescaleDB's <code>time_bucket()</code> on the <code>runs</code> hypertable.</div>
+    <div class="sub">Test runs per 30 minutes, by result. Bucketed by TimescaleDB's <code>time_bucket()</code> on the <code>runs</code> hypertable.</div>
     ${timeline(d.timeline.rows)}
   </section>
 

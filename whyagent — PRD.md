@@ -12,8 +12,6 @@ Nov 7, 2026 · @crystal
 
 **Built on** Entire, which records agent sessions (prompts, reasoning, tool calls) and links each one to its commit through a checkpoint trailer. Entire supplies the raw data; agentwhy does the causal analysis, which is about 90% Python.
 
-**Hackathon:** HackTrent, about 48 hours, team of 2. Main track: Best Use of Entire.
-
 ## Goals, non-goals, success metrics
 
 The v1 bar: on every seeded bug, agentwhy names the correct root-cause edit and backs it with test runs, not an LLM's opinion.
@@ -29,11 +27,10 @@ The v1 bar: on every seeded bug, agentwhy names the correct root-cause edit and 
 **Non-goals for v1**
 
 - The Intercept security scanner. Tests are the only failure signal.
-- A web UI. The terminal is the main interface; a web view is a stretch goal.
 - Perfect replay of the agent's mind. Reruns are an approximation, and we say so.
 - Agent sessions edited heavily by hand. Human edits get flagged, not analyzed.
 
-**Success metrics for the demo**
+**Success metrics**
 
 | Metric | Target |
 | --- | --- |
@@ -117,13 +114,13 @@ An edit counts as the root cause only if the test passes right before it, fails 
 
 1. Map `--line` back through the replay to the edit(s) that last wrote it.
 2. Revert those edits plus everything that depends on them from G's state, then run the test.
-3. PASS means it's a candidate root cause, so run P(k−1) and P(k) from Stage 5 to confirm the pass-to-fail boundary (2 runs), then skip to Stage 7. All three root-cause facts are then proven. Still TARGET\_FAIL means blame was wrong (the demo's "NOT the cause" moment), so continue.
+3. PASS means it's a candidate root cause, so run P(k−1) and P(k) from Stage 5 to confirm the pass-to-fail boundary (2 runs), then skip to Stage 7. All three root-cause facts are then proven. Still TARGET\_FAIL means blame was wrong (the report says "NOT the cause"), so continue.
 
 ### Stage 4 — Graph pruning (verified, never trusted)
 
 1. Ask Entire Graph which files are reachable from the failing test. Edits to unreachable files are prune candidates. An edit can't be pruned if a kept edit depends on it.
 2. **One verification run:** G with every prune candidate reverted. If it's still TARGET\_FAIL, pruning is safe. If not, drop pruning entirely, because Graph missed a dependency such as config or a dynamic import.
-3. Log the run count with and without pruning; that's the token-efficiency metric for the Entire judges.
+3. Log the run count with and without pruning; that's the token-efficiency metric.
 
 ### Stage 5 — Prefix bisect
 
@@ -174,7 +171,7 @@ With 5 runs per arm, only three results reach p < 0.05: 5/5 vs 0/5 (p = 0.004), 
 
 ## Data model and module interfaces
 
-Four modules meet at three shared types, so both people can build in parallel from hour 1 against a hand-written fixture of Steps.
+Four modules meet at a few shared types, so each can be built and tested on its own against a hand-written fixture of Steps.
 
 ```python
 @dataclass
@@ -203,18 +200,27 @@ class RunResult:
     exit_code: int
     duration_ms: int
     tokens: int | None       # agent reruns only
+
+@dataclass
+class RootCause:             # stage 6 → stages 7–8
+    step: Step               # guilty edit (reasoning, trigger, prompt, diff)
+    collateral: list[int]    # dependents reverted alongside it
+    before_state: State      # P(k-1): rerun start state
+    edits_before: list[Step] # for the "summary of edits 1..k-1" prompt
+    failing_output: str
+    head_state: State        # for "everything that passed at G still passes"
 ```
 
-| Module | Owner | Main functions | Input to output |
-| --- | --- | --- | --- |
-| `adapters/` | A | `load_session(commit)`, `parse(transcript, agent)` | Commit → list of Steps |
-| `replay/` | B | `build(state)`, `run(state, cmd, n)` | State → RunResults |
-| `bisect/` | A | `deps(steps)`, `prune(...)`, `prefix_bisect(...)`, `confirm(...)`, `ddmin(...)` | Steps + `run` → root-cause Step IDs |
-| `rerun/` | B | `make_lesson(step)`, `rerun(state, prompt, lesson, n)`, `decide(a, b)` | Root cause → lesson + verdict |
-| `entire.py` | A | `checkpoint_id(commit)`, `graph_reachable(test)`, `brain_lookup(files, error)`, `brain_save(lesson)` | Entire CLI/MCP → plain Python data |
-| `cli.py` | A (stages 1–6, report output), B (stages 0, 7, 8) | `main()` | Wires stages 0–8, prints the report |
+| Module | Main functions | Input to output |
+| --- | --- | --- |
+| `adapters/` | `load_session(commit)`, `parse(transcript, agent)` | Commit → list of Steps |
+| `replay/` | `build(state)`, `run(state, cmd, n)` | State → RunResults |
+| `bisect/` | `deps(steps)`, `prune(...)`, `prefix_bisect(...)`, `confirm(...)`, `ddmin(...)` | Steps + `run` → root-cause Step IDs |
+| `rerun/` | `make_lesson(step)`, `rerun(state, prompt, lesson, n)`, `decide(a, b)` | Root cause → lesson + verdict |
+| `entire.py` | `checkpoint_id(commit)`, `graph_reachable(test)`, `brain_lookup(files, error)`, `brain_save(lesson)` | Entire CLI/MCP → plain Python data |
+| `cli.py` | `main()` | Wires stages 0–8, prints the report |
 
-**Contract rules:** `bisect/` only ever talks to code through `replay.run`, so A can develop against a fake `run` that returns scripted outcomes before the sandbox exists. `rerun/` only ever talks to Brain through `entire.brain_lookup` / `entire.brain_save`, so B can develop against an in-memory stub before A wires the real Brain.
+**Contract rules:** `bisect/` only ever talks to code through `replay.run`, so it can be tested against a fake `run` that returns scripted outcomes. `rerun/` only ever talks to Brain through `entire.brain_lookup` / `entire.brain_save`, so it can be tested against an in-memory stub.
 
 ## Sandbox and execution environment
 
@@ -228,115 +234,34 @@ Every test run and every agent rerun happens in a throwaway Docker container, so
 - **Parallelism:** a worker pool of W containers. That's 2–4 on a laptop and 8+ on a Vultr VM. Bisect rounds and rerun arms both fan out across the pool.
 - **Result cache:** results are keyed by the hash of the State, so no state is ever tested twice across stages.
 
-## Sponsor track integration
+## Integrations
 
-Entire is the main track; Gemini, Vultr and Tiger Data each do real work in the pipeline rather than being bolted on. GoDaddy, Auth0 and Solana are skipped.
+Each outside service does real work in the pipeline:
 
-- **Entire** is the main track: Sessions are the input, Graph prunes the search, Brain stores validated lessons, and Trails opens the fix (stretch).
-- **Gemini** writes the lessons and runs the reruns through Gemini CLI. The free tier helps with the 10 runs per bug.
-- **Vultr** hosts the Docker sandbox pool, so bisect rounds and rerun arms run in parallel instead of one at a time on a laptop.
-- **Tiger Data** logs every test run and rerun (outcome, duration, tokens) and powers the chart showing fewer runs with Graph pruning. That's the token-savings proof Entire wants too.
+| Service | What it does in agentwhy | Stage |
+| --- | --- | --- |
+| Entire | Sessions are the input data (each commit's checkpoint trailer links to the agent session behind it); Graph prunes the search; Brain stores and serves validated lessons; Trails receives the root cause as a finding (`--trail`) | 1, 2, 4, 7 |
+| Gemini | Writes lessons; Gemini CLI is one of the rerun agents. Claude is the fallback for every model call | 7, 8 |
+| Tiger Data | Hypertable of every run (time, analysis, stage, state hash, outcome, duration, tokens); a continuous aggregate charts runs and tokens per stage, showing what Graph pruning saves | All |
+| Vultr | A VM hosts the sandbox pool so bisect rounds and rerun arms run in parallel instead of one at a time on a laptop | 5, 8 |
 
-| Track | What it does in agentwhy | Stage | Priority |
-| --- | --- | --- | --- |
-| Entire | Sessions are the input data; Graph prunes the search; Brain stores and serves validated lessons; Trails opens the fix (stretch) | 1, 2, 4, 7 | Core |
-| Gemini | Writes lessons; Gemini CLI is the default rerun agent (free tier keeps the 10 runs per bug affordable) | 7, 8 | Core |
-| Tiger Data | Hypertable of every run (time, analysis, stage, state hash, outcome, duration, tokens); a continuous aggregate charts runs and tokens per stage, proving Graph savings | All | Core |
-| Vultr | VM hosts the sandbox pool so bisect rounds and rerun arms run in parallel | 5, 8 | Core |
+Setup steps for Vultr and Tiger Data are in `docs/setup.md`; the schema is `docs/tiger_schema.sql`.
 
-**Sponsor work: now vs later.** Setup steps for Vultr and Tiger Data are in `docs/setup.md`; the schema is `docs/tiger_schema.sql`.
+## Example scenarios
 
-| When | Track | Who | What |
-| --- | --- | --- | --- |
-| Now (H0–4) | Entire Sessions | A | Verify transcripts store edit old/new text, reasoning, tool outputs; build the seeded repo so recording can start by H4. Biggest risk, everything depends on it |
-| Now (H0–4) | Entire Graph + Brain | A | 30-min access check only (CLI/MCP, what they return); build later |
-| Now (H0–4) | Vultr | B | Redeem credits (approval can lag), Ubuntu 24.04 VM 4 vCPU / 8 GB, install Docker. Run agentwhy on the VM itself, since sandboxes bind-mount worktrees |
-| Now (H0–4) | Gemini | B | API key; confirm Gemini CLI headless one-shot with a turn limit. If awkward, pick the backup rerun agent now |
-| Now (H0–4) | Tiger Data | B | Create service, apply schema, `TIGER_DATABASE_URL`. ~10 min; logging from day one means chart data accumulates for free |
-| Later (H16–28) | Entire Graph | A | Pruning + verification run, after plain bisect works. First cut if behind |
-| Later (H16–28) | Vultr | B | Move the worker pool onto the VM once the Docker sandbox works locally |
-| Later (H16–28) | Entire Brain | A builds, B calls | A wraps Brain as `brain_lookup` / `brain_save`; B calls them from Stage 7 (lookup) and Stage 8 (save on VALIDATED) |
-| Later (H28–40) | Tiger Data | B | Pruned vs unpruned chart from `runs_by_stage`; needs a `--no-prune` flag |
-| Stretch | Entire Trails | A | Open the fix as a trail, only with spare time |
-
-**Pitch line for Entire judges:** "We use Sessions as evidence, Graph to cut test runs, and Brain as a memory that only accepts lessons that are proven to work."
-
-## Demo plan and seeded repo
-
-The demo runs on a small Python repo with three bugs that real agents made during recorded Entire sessions; a real open-source repo is the stretch demo.
-
-**The seeded repo:** a small payments-API client (around 10 files, pytest suite), with Entire enabled from the first commit.
+The example repo is a small payments-API client (around 10 files, pytest suite) with Entire enabled from the first commit. Its bugs were made by real agents during recorded Entire sessions; see `docs/demo.md`.
 
 | Scenario | Agent task (the lure) | What goes wrong | What it shows |
 | --- | --- | --- | --- |
-| 1. Obvious | "Add pagination to `list_invoices`" | Off-by-one on the line the traceback points at | Blame hint confirmed in 1 run, no bisect needed |
-| 2. Sneaky (as recorded: "2b") | "Make the smoke script fail fast; also improve the 'gave up' error" (agents refused the original TLS lure, see `docs/demo.md`) | Sets `MAX_RETRIES = 1` globally in `config.py` via `sed -i` (after user steering, disclosed); the traceback points at the rewritten error line in `client.py` | Blame is wrong, bisect finds the real cause in another file |
+| 1. Obvious | "Add pagination to `list_invoices`" | Changes what `list_invoices()` returns, on the line the traceback points at | Blame hint confirmed in 1 run, no bisect needed |
+| 2. Sneaky (as recorded: "2b") | "Make the smoke script fail fast; also improve the 'gave up' error" | Sets `MAX_RETRIES = 1` globally in `config.py` via `sed -i` (after user steering); the traceback points at the rewritten error line in `client.py` | Blame is wrong, bisect finds the real cause in another file |
 | 3. Flaky | "Add response caching" | Time-based cache expiry makes a test fail some of the time | Flaky mode, any-failure voting, honest uncertainty |
 
-**Recording the sessions:**
-
-- In hours 0–4, someone runs Claude Code with Entire on each task until it makes the mistake naturally. The lures are built to tempt it, but it may take several tries.
-- Keep about 15 edits per session, so bisect has real work to do.
-- Freeze the recorded repo and sessions as fixtures.
-- **Backup:** if an agent won't make a mistake, hand-write the transcript in the same format and say so in the demo. Never pass a staged session off as real.
-- **Pick the rerun demo by dry run.** Use whichever scenario's no-lesson arm fails most often. Scenario 2 is the likely pick.
-
-**3-minute demo script:**
-
-1. **(20 s) The problem:** "Your agent broke a test. Why did it do that?"
-2. **(80 s) Live run on scenario 2b:** blame says the error line in `client.py`, the tool says NOT the cause, bisect finds the global `MAX_RETRIES = 1` the agent set with `sed -i` in `config.py`, and it shows the agent's reasoning (it knew it would break the retry test) and the steering prompt it was following. Disclose the steering.
-3. **(40 s) Reruns on scenario 1:** without vs with the lesson, then saved to Brain. Pre-run them and show cached results, rerunning live only if time allows. (Not 2b: its reruns start from the steering prompt.)
-4. **(20 s) Flaky + Tiger Data:** scenario 3 found despite failing ~28% of runs; chart of test runs per stage.
-5. **(10 s) Close:** "`git blame` tells you which line. We tell you which decision, and prove it."
-
-## Team split and 48-hour timeline
-
-Two owners, split along the pipeline's natural seam, with roughly equal remaining work (about 29 hours each, estimated below):
-
-- **A — Find the cause.** Entire data in, proven root-cause edit out (stages 1–6), plus the demo inputs that feed it.
-- **B — Prove the fix.** Run code and agents safely, fast and measurably (stage 0 and the sandbox under every stage), then write and validate the lesson (stages 7–8).
-
-They meet at exactly three interfaces: `replay.run(state, n) -> list[RunResult]` (B provides, A calls), `RootCause` (A provides, B consumes), and `entire.brain_lookup` / `brain_save` (A provides, B calls). The two gates are hard checkpoints where both stop and integrate.
-
-**Why this split.** Each half owns a complete vertical: A can reach "root cause found" on scenario 1 using only a fake `run`, and B can reach "lesson validated" on scenario 2 using only a hard-coded `RootCause`. Stage 7 (lesson writing) sits with B because the lesson only matters as input to the reruns that validate it; Brain stays with A because it's an Entire integration, and A owns everything that talks to Entire. Demo recording is split so each owner records the scenario their half needs first.
-
-| Owner | Owns | Est. hours left |
-| --- | --- | --- |
-| A — Find the cause | `adapters/`: session merge, write-hunk splitting, replay fidelity check, unattributed edit (5 h) · `bisect/`: Stage 3 edit-level blame hint, parallel prefix bisect over the pool, collateral, `--scan` (5 h) · Entire Graph pruning + verification run + `--no-prune` (4 h) · Entire Brain wrapper in `entire.py` (3 h) · seeded payments repo + pytest suite (4 h) · record scenarios 1 and 3 (4 h) · `cli.py` stages 1–6, `RootCause` type, final report output (4 h) | ~29 |
-| B — Prove the fix | `replay/` Docker sandbox: HEAD image, network off, timeouts, pinned tests (5 h) · worker pool, result cache, flaky-mode voting (4 h) · Vultr VM (1 h) · Tiger Data logging in `replay.run` + pruned-vs-unpruned chart (3 h) · Gemini setup + Stage 7 lesson generation (3 h) · `rerun/` headless rerun harness, tamper + regression checks (7 h) · record scenario 2 + rerun dry runs, pick demo scenario, pre-cache (4 h) · `cli.py` stages 0, 7, 8 (2 h) | ~29 |
-
-```python
-@dataclass
-class RootCause:              # A → B
-    step: Step                # guilty edit (reasoning, trigger, prompt, diff)
-    collateral: list[int]     # dependents reverted alongside it
-    before_state: State       # P(k-1): rerun start state
-    edits_before: list[Step]  # for the "summary of edits 1..k-1" prompt
-    failing_output: str
-    head_state: State         # for "everything that passed at G still passes"
-```
-
-| Hours | A — Find the cause | B — Prove the fix |
-| --- | --- | --- |
-| 0–4 | Verify Entire transcript format + Graph/Brain access; build the seeded payments repo + tests | Vultr credits + VM; Tiger Data service; Gemini key + headless CLI check; Docker sandbox locally |
-| 4–16 | Record scenarios 1 and 3; session merge, replay fidelity, Stage 3 hint; `RootCause` type | Record scenario 2; Stage 7 lesson generation; rerun harness; Tiger logging in `replay.run` |
-| **H16 gate** | Scenario 1 runs from start to root cause | Hard-coded scenario 2 runs to a verdict |
-| 16–28 | Graph pruning + verification run, ddmin wiring, Brain wrapper | Worker pool on Vultr, flaky-mode voting, tamper/regression checks, Brain calls in stages 7–8 |
-| **H28 gate** | Full pipeline on all 3 scenarios | |
-| 28–40 | `--scan`, `--no-prune`, report output polish | Rerun dry runs, pick demo scenario, pre-cache runs, Tiger chart |
-| 40–48 | Rehearse together, run the demo on the Vultr VM | |
-
-If the H28 gate slips, cut Graph pruning (A) and the parallel pool (B) first. The pipeline still proves root cause without them.
-
-**Integration rules:**
-
-- Everyone codes against the shared types from the data model section.
-- Merge to main at least every 6 hours.
-- Whoever finishes early picks up the dry runs.
+Sessions should have about 15 edits, so bisect has real work to do. If an agent won't make a mistake, a hand-written transcript must be labelled as such; never pass a staged session off as real.
 
 ## Risks, assumptions, open questions
 
-The biggest risk is that Entire's transcripts don't store full edit contents; verify that in hour 0, before anyone writes pipeline code.
+The biggest dependency is that Entire's transcripts store full edit contents; Claude Code's do.
 
 | Risk | Likelihood | Fallback |
 | --- | --- | --- |
@@ -344,19 +269,6 @@ The biggest risk is that Entire's transcripts don't store full edit contents; ve
 | Replay doesn't reproduce the commit | Medium | The leftover diff becomes an "unattributed" edit (Stage 2), so the pipeline still runs |
 | Graph or Brain has no usable CLI/MCP access | Medium | Graph: skip pruning, use plain bisect. Brain: store lessons in Tiger Data, sync to Brain if possible |
 | Agent won't make the planted mistake | Medium | Stronger lures, multiple attempts, or a disclosed hand-written transcript |
-| Baseline rerun arm passes too often for a dramatic result | Medium | Pick the scenario by dry run; raise `--runs` for the final demo |
-| Gemini CLI rate limits during reruns | Medium | Cache every run; pre-run the demo; Claude Code headless as backup |
-| Dependency changes mid-session break early states | Low in the seeded repo | Flagged in the report; avoid in seeded tasks |
-
-**Verify in hour 0 (one person each, 30 minutes):**
-
-- [ ] Entire transcript format: are edit old/new text, assistant text, and tool outputs all stored, and where?
-- [ ] Entire Graph and Brain: CLI commands or MCP tools available, and what they return.
-- [ ] Gemini CLI headless mode: how to run a one-shot task with a turn limit, and the free-tier limits.
-- [ ] Vultr credits claimed and a VM with Docker up.
-- [ ] Tiger Data service created and the `runs` schema applied (see `docs/setup.md`).
-
-**Open decisions:**
-
-- [ ] Final name (`agentwhy` is a placeholder).
-- [ ] Rerun agent default if Gemini CLI headless turns out to be awkward.
+| Baseline rerun arm passes too often to show a difference | Medium | Raise `--runs`; the verdict reports "Not needed" when the original failure was a fluke |
+| Gemini CLI rate limits during reruns | Medium | Cache every run; fall back to Claude Code headless |
+| Dependency changes mid-session break early states | Low | Flagged in the report |

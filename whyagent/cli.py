@@ -157,7 +157,7 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
     """Stages 7-8. rp must know rc's steps. Fills `out` with lesson, rr, b_all and verdict as they become
     known, for the PR step."""
     from .model import model_name
-    from .rerun import Reruns, agent_by_name, decide, make_lesson
+    from .rerun import Reruns, agent_by_name, decide
     from .rerun.lesson import GENERATORS, generator_missing
 
     # Stage 7 — Brain first, then the --model writer (Gemini or Claude)
@@ -183,20 +183,13 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
         report.note(f"Lesson skipped: {missing} and no --lesson.")
         return 0 if args.no_rerun else 1
     if not lesson:
-        from .rerun.lesson import write_lesson
-
         try:
-            if writer == "gemini":
-                lesson, source, tried = write_lesson(rc)  # Gemini first, Claude if Gemini can't
-            else:
-                lesson, tried = make_lesson(rc, GENERATORS[writer]), []
+            lesson, source = _new_lesson(rc, writer)
         except Exception as e:  # noqa: BLE001
             msg = str(e).split(". {")[0][:300]
             print(f"lesson: {'no provider could write it' if writer == 'gemini' else label + ' failed'} ({msg})")
             report.note(f"Lesson generation failed: {msg}")
             return 0 if args.no_rerun else 1  # the root cause is proven either way; only reruns need a lesson
-        for t in tried:
-            print(f"lesson: {t} → writing it with Claude")
     hidden = "" if rc.step.reasoning else " (agent reasoning not recorded; built from trigger + diff)"
     print(f'lesson: "{lesson}"' + {"brain": " (from Brain)", "given": " (from --lesson)",
                                    "claude": " (written by Claude)", "gemini": " (written by Gemini)"}.get(source, "")
@@ -229,7 +222,8 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
           + (f", target test {target_runs}× per rerun (flaky)" if target_runs > 1 else "") + "…")
     if args.runs < 4:
         print(f"rerun: note: with {args.runs} runs per arm the Fisher test can't reach p < 0.05 (VALIDATED needs 4+)")
-    events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson)
+    max_attempts = max(1, getattr(args, "lesson_attempts", None) or 1)
+    events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, attempt=1)
     rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
     rr.capture_diff = bool(getattr(args, "pr", False))  # the PR builds its fix from a passing rerun's diff
     out["rr"] = rr
@@ -240,7 +234,7 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
         providers.mark_gemini_down(rr._abort)
         print(f"rerun: Gemini CLI failed ({rr._abort[:120]}) → rerunning both arms with Claude Code")
         agent = agent_by_name("claude-code")
-        events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, restart=True)
+        events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, attempt=1, restart=True)
         rr = Reruns(rp, agent, workers=args.workers, runlog=runlog, target_runs=target_runs)
         rr.capture_diff = bool(getattr(args, "pr", False))
         out["rr"] = rr
@@ -250,46 +244,107 @@ def _lesson_and_reruns(rc: RootCause, rp, args, report: Report, runlog, out: dic
         report.note("Reruns weren't required to pass these tests, which pass at the guilty commit but not before "
                     "the session (written for code the original agent invented): " + ", ".join(rr.excluded[:8])
                     + (" …" if len(rr.excluded) > 8 else ""))
+    # OTHER (agent never really ran: quota, auth, crash) is never evidence
+    a = [r for r in a_all if r.outcome != "OTHER"]
+    for r in a_all:
+        if r.outcome != "PASS":
+            report.note(f"Rerun arm A: {r.outcome.lower()}, {r.detail}")
+    ap = sum(r.outcome == "PASS" for r in a)
+    attempts: list[dict] = []  # every lesson tested, in order; the ones that failed steer the next one
+    attempt = 1
+    while True:
+        tag = f" (lesson {attempt})" if attempt > 1 else ""
+        for r in b_all:
+            if r.outcome != "PASS":
+                report.note(f"Rerun arm B{tag}: {r.outcome.lower()}, {r.detail}")
+        b = [r for r in b_all if r.outcome != "OTHER"]
+        out["b_all"] = b_all
+        if not a or not b:
+            out["verdict"] = "INCONCLUSIVE"
+            why = next(r.detail for r in a_all + b_all if r.outcome == "OTHER")
+            print(f"rerun: INCONCLUSIVE, no valid runs in {'both arms' if not a and not b else 'one arm'} ({why})")
+            attempts.append({"text": lesson, "source": source, "verdict": "INCONCLUSIVE", "p": None,
+                             "b": [r.outcome for r in b_all]})
+            report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
+                               "p": None, "verdict": "INCONCLUSIVE", "saved_to_brain": False, "attempts": attempts}
+            events.stage("rerun", "error", verdict="INCONCLUSIVE", why=why, attempt=attempt)
+            _note_blocked(rr, report)
+            return 1
+        bp = sum(r.outcome == "PASS" for r in b)
+        verdict, p = decide(ap, len(a), bp, len(b))
+        out["verdict"] = verdict
+        dropped = len(a_all) + len(b_all) - len(a) - len(b)
+        saved = False
+        if verdict == "VALIDATED" and source != "brain":
+            try:
+                entire.brain_save({"text": lesson, "files": [rc.step.file], "failing_output": rc.failing_output,
+                                   "repo": entire.repo_name(rp.repo),
+                                   "verdict": verdict, "p": p, "agent": agent.name, "session_id": rc.step.session_id,
+                                   "step_id": rc.step.id, "runs": {"a": [r.outcome for r in a_all],
+                                                                   "b": [r.outcome for r in b_all]}})
+                saved = True
+            except Exception as e:  # noqa: BLE001
+                print(f"rerun: Brain save failed ({e})")
+        print(f"rerun{tag}: without lesson {ap}/{len(a)} pass · with lesson {bp}/{len(b)} pass · p = {p:.3f} → "
+              f"{verdict}" + (", saved to Brain" if saved else "")
+              + (f" ({dropped} runs dropped as OTHER)" if dropped else ""))
+        attempts.append({"text": lesson, "source": source, "verdict": verdict, "p": p,
+                         "b": [r.outcome for r in b_all]})
+        report["lesson"] = {"text": lesson, "source": source}
+        report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
+                           "p": p, "verdict": verdict, "saved_to_brain": saved, "attempts": attempts,
+                           "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
+        events.stage("rerun", "done", verdict=verdict, p=p, a=f"{ap}/{len(a)}", b=f"{bp}/{len(b)}", attempt=attempt)
+        # VALIDATED: done. NOT_NEEDED: agents without any lesson already pass, so no lesson can beat that.
+        if verdict in ("VALIDATED", "NOT_NEEDED") or attempt >= max_attempts:
+            break
+        # INEFFECTIVE / PROMISING: the guilty edit is still a mistake agents make; write a different lesson,
+        # told what was already tried and what still went wrong, and test it against the same no-lesson arm.
+        attempt += 1
+        tried = [{"text": t["text"], "verdict": t["verdict"], "a": [ap, len(a)],
+                  "b": [sum(o == "PASS" for o in t["b"]), sum(o != "OTHER" for o in t["b"])],
+                  "failures": t.get("failures")} for t in attempts]
+        tried[-1]["failures"] = attempts[-1]["failures"] = [r.detail for r in b if r.outcome != "PASS"]
+        print(f"rerun: lesson {verdict.lower()}, writing a different one (attempt {attempt} of {max_attempts})…")
+        events.stage("lesson", attempt=attempt, previous=attempts[-1]["text"], previous_verdict=verdict)
+        try:
+            lesson, source = _new_lesson(rc, writer, tried)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).split(". {")[0][:300]
+            print(f"lesson: couldn't write another one ({msg}); keeping the last result")
+            report.note(f"Lesson attempt {attempt} not written: {msg}")
+            events.stage("lesson", "error", why=msg, attempt=attempt)
+            break
+        print(f'lesson {attempt}: "{lesson}"')
+        out["lesson"] = lesson
+        report["lesson"] = {"text": lesson, "source": source}
+        events.stage("lesson", "done", text=lesson, source=source, attempt=attempt)
+        events.stage("rerun", agent=agent.name, runs=args.runs, lesson=lesson, attempt=attempt, keep_a=True)
+        _, b_all = rr.run(rc, lesson, args.runs, arm_a=False, job0=args.runs * (attempt + 1))
+    if len(attempts) > 1:
+        report.note("Lessons tested: " + " · ".join(f'#{i} {t["verdict"]}: "{t["text"]}"'
+                                                    for i, t in enumerate(attempts, 1)))
+    _note_blocked(rr, report)
+    return 0
+
+
+def _new_lesson(rc: RootCause, writer: str, tried: list[dict] | None = None) -> tuple[str, str]:
+    """(lesson, source) from the --model writer; Gemini falls back to Claude. `tried`: lessons that failed."""
+    from .rerun import make_lesson
+    from .rerun.lesson import GENERATORS, write_lesson
+
+    if writer != "gemini":
+        return make_lesson(rc, GENERATORS[writer], tried=tried), writer
+    lesson, source, fell = write_lesson(rc, tried=tried)  # Gemini first, Claude if Gemini can't
+    for t in fell:
+        print(f"lesson: {t} → writing it with Claude")
+    return lesson, source
+
+
+def _note_blocked(rr, report: Report) -> None:
     if rr.blocked:
         print(f"rerun: blocked agent network access to {', '.join(rr.blocked)}")
         report.note(f"Reruns: the agent tried to reach {', '.join(rr.blocked)}; blocked (only the model API is allowed).")
-    for r in a_all + b_all:
-        if r.outcome != "PASS":
-            report.note(f"Rerun arm {r.arm}: {r.outcome.lower()}, {r.detail}")
-    # OTHER (agent never really ran: quota, auth, crash) is never evidence
-    a = [r for r in a_all if r.outcome != "OTHER"]
-    b = [r for r in b_all if r.outcome != "OTHER"]
-    out["b_all"] = b_all
-    if not a or not b:
-        out["verdict"] = "INCONCLUSIVE"
-        why = next(r.detail for r in a_all + b_all if r.outcome == "OTHER")
-        print(f"rerun: INCONCLUSIVE, no valid runs in {'both arms' if not a and not b else 'one arm'} ({why})")
-        report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
-                           "p": None, "verdict": "INCONCLUSIVE", "saved_to_brain": False}
-        events.stage("rerun", "error", verdict="INCONCLUSIVE", why=why)
-        return 1
-    ap, bp = sum(r.outcome == "PASS" for r in a), sum(r.outcome == "PASS" for r in b)
-    verdict, p = decide(ap, len(a), bp, len(b))
-    out["verdict"] = verdict
-    dropped = len(a_all) + len(b_all) - len(a) - len(b)
-    saved = False
-    if verdict == "VALIDATED" and source != "brain":
-        try:
-            entire.brain_save({"text": lesson, "files": [rc.step.file], "failing_output": rc.failing_output,
-                               "repo": entire.repo_name(rp.repo),
-                               "verdict": verdict, "p": p, "agent": agent.name, "session_id": rc.step.session_id,
-                               "step_id": rc.step.id, "runs": {"a": [r.outcome for r in a_all],
-                                                               "b": [r.outcome for r in b_all]}})
-            saved = True
-        except Exception as e:  # noqa: BLE001
-            print(f"rerun: Brain save failed ({e})")
-    print(f"rerun: without lesson {ap}/{len(a)} pass · with lesson {bp}/{len(b)} pass · p = {p:.3f} → {verdict}"
-          + (", saved to Brain" if saved else "") + (f" ({dropped} runs dropped as OTHER)" if dropped else ""))
-    report["rerun"] = {"agent": agent.name, "a": [r.outcome for r in a_all], "b": [r.outcome for r in b_all],
-                       "p": p, "verdict": verdict, "saved_to_brain": saved,
-                       "tokens": sum(r.tokens or 0 for r in a_all + b_all) or None}
-    events.stage("rerun", "done", verdict=verdict, p=p, a=f"{ap}/{len(a)}", b=f"{bp}/{len(b)}")
-    return 0
 
 
 def stage_pr(rc: RootCause, rp, rr, b_all, lesson: str, verdict: str | None, args, report: Report) -> None:
@@ -678,6 +733,9 @@ def main(argv=None) -> int:
     p.add_argument("--sandbox", choices=["docker", "local"], default="docker",
                    help="run tests in throwaway Docker containers (default) or directly on the host")
     p.add_argument("--no-rerun", action="store_true", help="stop after root cause")
+    p.add_argument("--lesson-attempts", type=int, default=3,
+                   help="lessons to try when one doesn't help (INEFFECTIVE/PROMISING): each retry writes a different "
+                        "lesson, told what failed, and reruns only the with-lesson arm (default 3; 1 = no retries)")
     p.add_argument("--no-prune", action="store_true", help="skip Graph pruning (for the pruned-vs-blind comparison)")
     p.add_argument("--scan", action="store_true", help="test every prefix instead of bisecting (sessions < 20 edits)")
     p.add_argument("--check-entire", action="store_true", help="smoke-test the Entire connection and exit")

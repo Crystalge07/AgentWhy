@@ -44,7 +44,17 @@ Rules:
   all of the user's repositories, so don't name files, functions, variables or constants from this one.
 - The better alternative must keep the existing tests passing as they are. Never suggest editing, mocking,
   skipping or loosening tests: changing a test to fit the code is the kind of shortcut we're catching.
-- No preamble, quotes or markdown. Output only the sentence."""
+- No preamble, quotes or markdown. Output only the sentence.{tried}"""
+
+TRIED = """
+
+These lessons were already tested by rerunning fresh agents on this task, and they did NOT stop the mistake.
+Write a DIFFERENT lesson: a different diagnosis of what went wrong or a different alternative, not a
+rewording of these.
+{items}"""
+
+VERDICT_WHY = {"INEFFECTIVE": "agents with it did no better than without it",
+               "PROMISING": "agents did a little better, but not enough to be sure"}
 
 
 def _clip(s: str | None, n: int = 2500) -> str:
@@ -52,8 +62,25 @@ def _clip(s: str | None, n: int = 2500) -> str:
     return s if len(s) <= n else "…" + s[-n:]
 
 
-def build_prompt(step: Step, failing_output: str = "") -> str:
-    return PROMPT.format(
+def _tried(tried: list[dict] | None) -> str:
+    """Earlier lessons that failed their reruns: {text, verdict, a: [pass, n], b: [pass, n], failures: [detail]}."""
+    if not tried:
+        return ""
+    items = []
+    for t in tried:
+        line = f"- \"{t['text']}\": " + VERDICT_WHY.get(t.get("verdict"), "it didn't help")
+        if t.get("b"):
+            line += f" ({t['b'][0]}/{t['b'][1]} passed with it"
+            line += f", {t['a'][0]}/{t['a'][1]} without)" if t.get("a") else ")"
+        fails = [f for f in t.get("failures") or [] if f][:3]
+        if fails:
+            line += "\n  What still went wrong with it: " + "; ".join(_clip(f, 200) for f in fails)
+        items.append(line)
+    return TRIED.format(items="\n".join(items))
+
+
+def build_prompt(step: Step, failing_output: str = "", tried: list[dict] | None = None) -> str:
+    return PROMPT.format(tried=_tried(tried),
         prompt=_clip(step.prompt, 800) or "(not recorded)",
         trigger=_clip(step.trigger) or "(none recorded)",
         reasoning=_clip(step.reasoning, 1500) or "(not recorded: the agent's reasoning was hidden; "
@@ -138,13 +165,15 @@ def generator_missing(name: str) -> str | None:
     return None if os.environ.get("GEMINI_API_KEY") else "GEMINI_API_KEY isn't set"
 
 
-def make_lesson(rc: RootCause | Step, generate: Callable[[str], str] = gemini_generate) -> str:
-    """Write the lesson. `generate` is injectable so tests don't call the API."""
+def make_lesson(rc: RootCause | Step, generate: Callable[[str], str] = gemini_generate,
+                tried: list[dict] | None = None) -> str:
+    """Write the lesson. `generate` is injectable so tests don't call the API. `tried`: lessons that already
+    failed their reruns, so the model writes a different one."""
     step, failing = (rc.step, rc.failing_output) if isinstance(rc, RootCause) else (rc, "")
-    return _clean(generate(build_prompt(step, failing)))
+    return _clean(generate(build_prompt(step, failing, tried)))
 
 
-def write_lesson(rc: RootCause | Step, **providers_kw) -> tuple[str, str, list[str]]:
+def write_lesson(rc: RootCause | Step, tried: list[dict] | None = None, **providers_kw) -> tuple[str, str, list[str]]:
     """Stage 7 with provider fallback: (lesson, provider, why Gemini was skipped). Gemini first, then Claude."""
     from .. import providers
 
@@ -154,5 +183,5 @@ def write_lesson(rc: RootCause | Step, **providers_kw) -> tuple[str, str, list[s
         text, used["provider"], used["tried"] = providers.generate(prompt, **providers_kw)
         return text
 
-    lesson = make_lesson(rc, generate=gen)
+    lesson = make_lesson(rc, generate=gen, tried=tried)
     return lesson, used["provider"], used["tried"]
