@@ -16,8 +16,9 @@ Raw schema (all keys optional except meta; the page shows whatever stages have d
   bisect      {probes: [{after_step, outcome}], boundary, kept, via}
   confirm     {step_id, collateral, outcome, ddmin}
   root_cause  {step_id, failing_output, collateral, extra_causes}
-  lesson      {text, source: "gemini"|"brain"|"given"}
-  rerun       {agent, a: [outcome], b: [outcome], p, verdict, saved_to_brain, tokens}
+  lesson      {text, source: "gemini"|"brain"|"given"}  (the last lesson tested)
+  rerun       {agent, a: [outcome], b: [outcome], p, verdict, saved_to_brain, tokens,
+               attempts: [{text, source, verdict, p, b: [outcome]}]}  (every lesson tried; a is shared)
   live        {rule, counterfactual: [{outcome}], after: {outcome, label}}  (--live instead of lesson/rerun)
   runs        [{stage, label, outcome, duration_ms, tokens, ts, edits, cached}]
   notes       [str]
@@ -286,6 +287,9 @@ def build_view(d: dict, db: dict | None = None) -> dict:
         if rr:
             lesson.update(p=rr.get("p"), verdict=rr.get("verdict"), validated=rr.get("verdict") == "VALIDATED",
                           saved=bool(rr.get("saved_to_brain")), agent=rr.get("agent"))
+            # lessons that failed their reruns before this one (each retry wrote a different one)
+            lesson["tried"] = [{"text": t["text"], "verdict": t.get("verdict"), "p": t.get("p"),
+                                "with": arm(t.get("b") or [])} for t in (rr.get("attempts") or [])[:-1]]
     elif live and live.get("rule"):
         after = (live.get("after") or {}).get("outcome")
         lesson = {"text": live["rule"], "source": "live", "without": arm([c["outcome"] for c in live.get("counterfactual", [])]),

@@ -248,7 +248,7 @@ function fresh() {
   NODES.forEach(n => nodes[n.k] = { status: "idle", sub: "" });
   return { nodes, meta: null, t0: null, failure: null, commits: null, blameCommit: null, commitTests: {}, steps: [], order: [],
            blame: null, prune: null, bisect: null, confirm: null, rc: null, tests: {}, lookup: null, lesson: null, fallback: false,
-           rerun: null, done: null, error: null, runs: 0, slots: [], focus: null, panelFor: "failed", edgeLab: {} };
+           rerun: null, tried: [], done: null, error: null, runs: 0, slots: [], focus: null, panelFor: "failed", edgeLab: {} };
 }
 const vote = outs => outs.includes("TARGET_FAIL") ? "TARGET_FAIL" : outs.length && outs.every(o => o === "PASS") ? "PASS" : "OTHER";
 const setNode = (k, status, sub) => { const n = S.nodes[k]; if (!n) return; if (status) n.status = status; if (sub !== undefined) n.sub = sub; };
@@ -358,12 +358,13 @@ function onStage(ev) {
       blame_hint: "Undo its suspect", prune: "Tracing what the test uses", bisect: "Testing in parallel", confirm: "Undo only that edit",
       lesson: "Checking past lessons", rerun: "Fresh agents, with vs. without",
     }[k];
-    setNode(k, "active", sub);
+    setNode(k, "active", k === "lesson" && ev.attempt > 1 ? `Writing lesson ${ev.attempt}` : sub);
     if (STAGE_NODE[k] || k === "rerun") S.slots = [];
     if (k === "blame_hint") S.blame = { ...ev };
     if (k === "bisect") S.bisect = { kept: ev.kept };
     if (k === "confirm") S.confirm = { ...ev };
-    if (k === "rerun") S.rerun = { agent: ev.agent, runs: ev.runs, a: [], b: [], running: {} };
+    if (k === "lesson" && ev.attempt > 1) S.tried.push({ text: ev.previous, verdict: ev.previous_verdict, b: S.rerun ? S.rerun.b : [] });
+    if (k === "rerun") S.rerun = { agent: ev.agent, runs: ev.runs, a: ev.keep_a && S.rerun ? S.rerun.a : [], b: [], running: {}, attempt: ev.attempt || 1 };
   } else if (st === "done") {
     if (k === "precheck") { setNode(k, "done", ev.mode === "flaky" ? "Fails only sometimes" : "Passed before, fails now"); S.flaky = ev.mode === "flaky" ? ev.runs_per_state : 0; }
     if (k === "commit") { S.guiltySubject = ev.subject; setNode(k, "done", "The agent's commit"); S.edgeLab.commit = "1 commit"; }
@@ -688,6 +689,7 @@ const PANELS = {
   lesson(pb) {
     if (S.lookup) say(pb, "a", S.lookup.found ? `We've seen this mistake before: a <b>proven lesson</b> is already saved in Tiger Data. Reuse it.`
       : `No saved lesson for this mistake yet, so we write one from the agent's own reasoning and the edit that broke things.`);
+    S.tried.forEach((t, i) => say(pb, "t" + i, `<small>Lesson ${i + 1} didn't help (${t.b.filter(r => r.outcome === "PASS").length} of ${t.b.length} got it right with it), so we wrote a different one</small><s>${esc(t.text)}</s>`, "quote"));
     const L = S.lesson;
     if (L) {
       say(pb, "l", esc(L.text), "lesson");
@@ -698,7 +700,8 @@ const PANELS = {
   rerun(pb) {
     const R = S.rerun;
     if (!R) { say(pb, "s", "Skipped."); return; }
-    say(pb, "a", `Does the lesson actually help? Rewind to just before the bad edit and give <b>the same task to fresh agents</b>: ${R.runs} without the lesson, ${R.runs} with it.`);
+    say(pb, "a", R.attempt > 1 ? `Lesson ${R.attempt - 1} didn't help, so test <b>lesson ${R.attempt}</b>: ${R.runs} more fresh agents with it, against the same ${R.runs} without.`
+      : `Does the lesson actually help? Rewind to just before the bad edit and give <b>the same task to fresh agents</b>: ${R.runs} without the lesson, ${R.runs} with it.`);
     const arms = keep(pb, "arms", "arms");
     [["A", "Without the lesson", R.a], ["B", "With the lesson", R.b]].forEach(([arm, l, done]) => {
       const row = keep(arms, arm, "arm");

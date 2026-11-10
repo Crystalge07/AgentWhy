@@ -346,18 +346,20 @@ class Reruns:
         events.emit("rerun_start", arm=arm, job=job)
         return _announce(self.one(rc, lesson, arm), job)
 
-    def run(self, rc: RootCause, lesson: str, n: int) -> tuple[list[RerunResult], list[RerunResult]]:
-        """Both arms, interleaved so rate limits or drift hit both equally."""
+    def run(self, rc: RootCause, lesson: str, n: int, arm_a: bool = True,
+            job0: int = 0) -> tuple[list[RerunResult], list[RerunResult]]:
+        """Both arms, interleaved so rate limits or drift hit both equally. arm_a=False runs only arm B: a retry
+        with a new lesson reuses the first attempt's no-lesson arm, since nothing about it changed."""
         if not self._prepared:
             self.prepare(rc)
-        jobs = [(None, "A"), (lesson, "B")] * n
+        jobs = [(None, "A"), (lesson, "B")] * n if arm_a else [(lesson, "B")] * n
         sb = self.rp.sandbox
         use_egress = bool(self.agent.allow) and getattr(sb, "image", None) is not None
         if use_egress:
             self._egress = Egress(sb.image, self.agent.allow).__enter__()
         try:
             with ThreadPoolExecutor(max_workers=max(1, self.workers)) as pool:
-                results = list(pool.map(lambda ij: self._one_announced(rc, ij[0], *ij[1]), enumerate(jobs)))
+                results = list(pool.map(lambda ij: self._one_announced(rc, job0 + ij[0], *ij[1]), enumerate(jobs)))
         finally:
             if self._egress is not None:
                 self._egress.__exit__(None, None, None)

@@ -684,7 +684,9 @@ function renderLesson() {
   else if (L.verdict) foot = `Not kept${p != null ? `. p = ${p}` : ""}, so ${why[L.verdict] || "it didn't clearly help"}.`;
   else foot = "Not tested with reruns yet.";
   const src = L.source === "brain" ? "Reused from Brain. " : L.source === "given" ? "Given with --lesson. " : "";
-  $("#lesson").innerHTML = `<div class="callout" style="margin-bottom:12px"><p style="font-size:18px">“${esc(L.text)}”</p></div>
+  const tried = (L.tried || []).length ? `<p class="muted" style="margin:0 0 8px;font-size:14px">${L.tried.length === 1 ? "An earlier lesson" : L.tried.length + " earlier lessons"} didn't help, so ${L.tried.length === 1 ? "it was" : "they were"} rewritten:</p>
+    <ol style="margin:0 0 14px;font-size:14px">${L.tried.map((t) => `<li><s>“${esc(t.text)}”</s> <span class="muted">${t.with[0]} / ${t.with[1]} pass with it${t.p != null ? `, p = ${t.p.toFixed(3)}` : ""} · ${esc((t.verdict || "").toLowerCase().replace("_", " "))}</span></li>`).join("")}</ol>` : "";
+  $("#lesson").innerHTML = `${tried}<div class="callout" style="margin-bottom:12px"><p style="font-size:18px">“${esc(L.text)}”</p></div>
     ${L.without && L.with ? `<table><thead><tr><th>Agent rerun from just before the bad edit</th><th>Runs</th><th class="num">Result</th></tr></thead><tbody>
     ${arm(L.live ? "Without the rule" : "Without the lesson", L.without)}${arm(L.live ? "With the rule" : "With the lesson", L.with)}</tbody></table>` : ""}
     <p style="margin-top:12px;font-size:14px">${src}${foot}</p>`;
